@@ -12,6 +12,7 @@ from PyQt6.QtGui import QAction, QIcon
 from ui.message_table import MessageTableWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
+from utils.signal_decoder import SignalDecoder
 
 
 class MainWindow(QMainWindow):
@@ -25,10 +26,14 @@ class MainWindow(QMainWindow):
         # Initialize data managers
         self.message_parser = MessageParser()
         self.dbc_manager = DBCManager()
+        self.signal_decoder = SignalDecoder(self.dbc_manager)
         self.current_messages = []
 
         # Initialize UI components
         self.init_ui()
+
+        # Set signal decoder to message table
+        self.message_table.set_signal_decoder(self.signal_decoder)
 
     def init_ui(self):
         """Initialize the user interface"""

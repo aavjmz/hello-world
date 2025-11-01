@@ -11,6 +11,7 @@ from PyQt6.QtGui import QColor, QAction
 from typing import List, Optional
 from parsers.asc_parser import CANMessage
 from utils.timestamp_formatter import TimestampFormatter, TimestampFormat
+from utils.signal_decoder import SignalDecoder
 
 
 class MessageTableWidget(QTableWidget):
@@ -26,6 +27,7 @@ class MessageTableWidget(QTableWidget):
         # Data storage
         self.messages: List[CANMessage] = []
         self.timestamp_formatter = TimestampFormatter(TimestampFormat.RAW)
+        self.signal_decoder: Optional[SignalDecoder] = None
 
         # Setup table
         self.setup_table()
@@ -37,9 +39,9 @@ class MessageTableWidget(QTableWidget):
     def setup_table(self):
         """Setup table properties and headers"""
         # Set column count and headers
-        self.setColumnCount(7)
+        self.setColumnCount(8)
         self.setHorizontalHeaderLabels([
-            "序号", "时间戳", "通道", "CAN ID", "方向", "DLC", "数据"
+            "序号", "时间戳", "通道", "CAN ID", "方向", "DLC", "数据", "信号值"
         ])
 
         # Set table properties
@@ -57,7 +59,8 @@ class MessageTableWidget(QTableWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # CAN ID
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 方向
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # DLC
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)  # 数据
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)       # 数据
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)            # 信号值
 
         # Enable context menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -167,6 +170,18 @@ class MessageTableWidget(QTableWidget):
         item.setFont(self.font())  # Use monospace would be better
         self.setItem(row, 6, item)
 
+        # Column 7: Signal values
+        signal_str = ""
+        if self.signal_decoder:
+            decoded = self.signal_decoder.decode_message(message)
+            if decoded:
+                signal_str = self.signal_decoder.get_signal_summary(decoded, max_signals=3)
+
+        item = QTableWidgetItem(signal_str)
+        if signal_str:
+            item.setForeground(QColor(0, 100, 150))  # Dark cyan for signals
+        self.setItem(row, 7, item)
+
     def get_selected_message(self) -> Optional[CANMessage]:
         """Get the currently selected message"""
         current_row = self.currentRow()
@@ -263,3 +278,14 @@ class MessageTableWidget(QTableWidget):
         if 0 <= index < self.rowCount():
             self.scrollToItem(self.item(index, 0))
             self.selectRow(index)
+
+    def set_signal_decoder(self, decoder: Optional[SignalDecoder]):
+        """
+        Set the signal decoder for decoding messages
+
+        Args:
+            decoder: SignalDecoder instance or None to disable decoding
+        """
+        self.signal_decoder = decoder
+        # Refresh display to show/hide signal values
+        self.refresh_display()
