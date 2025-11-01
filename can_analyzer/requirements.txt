@@ -1,0 +1,20 @@
+# CAN Analyzer Requirements
+
+# UI Framework
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+
+# CAN Message Parsing
+python-can>=4.3.0
+cantools>=39.4.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Plotting
+pyqtgraph>=0.13.3
+matplotlib>=3.7.0
+
+# File Format Support
+asammdf>=7.3.0  # For BLF file support
