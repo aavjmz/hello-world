@@ -5,10 +5,13 @@ Main Window UI for CAN Analyzer
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMenuBar, QToolBar, QStatusBar,
-    QTabWidget, QTableWidget, QMessageBox
+    QTabWidget, QMessageBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QIcon
+from ui.message_table import MessageTableWidget
+from parsers.message_parser import MessageParser
+from utils.dbc_manager import DBCManager
 
 
 class MainWindow(QMainWindow):
@@ -18,6 +21,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("CAN Analyzer - CAN Bus Message Analysis Tool")
         self.setGeometry(100, 100, 1400, 800)
+
+        # Initialize data managers
+        self.message_parser = MessageParser()
+        self.dbc_manager = DBCManager()
+        self.current_messages = []
 
         # Initialize UI components
         self.init_ui()
@@ -135,12 +143,8 @@ class MainWindow(QMainWindow):
         # Create splitter for resizable panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel - Message table placeholder
-        self.message_table = QTableWidget()
-        self.message_table.setColumnCount(5)
-        self.message_table.setHorizontalHeaderLabels([
-            "时间戳", "CAN ID", "方向", "数据", "信号值"
-        ])
+        # Left panel - Message table
+        self.message_table = MessageTableWidget()
         splitter.addWidget(self.message_table)
 
         # Right panel - Tab widget for views
@@ -163,16 +167,113 @@ class MainWindow(QMainWindow):
         """Create the status bar"""
         self.statusBar().showMessage("就绪")
 
-    # Slot methods (placeholders for now)
+    # Slot methods
     def import_messages(self):
         """Import CAN messages from file"""
-        QMessageBox.information(self, "导入报文", "导入报文功能即将实现")
-        self.statusBar().showMessage("导入报文功能即将实现", 3000)
+        # Open file dialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入CAN报文文件",
+            "",
+            "CAN文件 (*.asc *.blf *.log);;ASC文件 (*.asc);;BLF文件 (*.blf);;所有文件 (*.*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.statusBar().showMessage(f"正在解析文件: {file_path}...")
+
+            # Parse file
+            messages = self.message_parser.parse_file(file_path)
+            self.current_messages = messages
+
+            # Display messages in table
+            self.message_table.set_messages(messages)
+
+            # Get statistics
+            parser = self.message_parser.get_parser()
+            if parser:
+                stats = parser.get_statistics()
+                msg = (f"导入成功! "
+                       f"共 {stats['total_messages']} 条报文, "
+                       f"时间范围: {stats['duration']:.3f}s, "
+                       f"唯一ID: {stats['unique_ids']} 个")
+                self.statusBar().showMessage(msg, 5000)
+
+                # Show summary dialog
+                QMessageBox.information(
+                    self,
+                    "导入成功",
+                    f"文件: {file_path}\n\n"
+                    f"总报文数: {stats['total_messages']}\n"
+                    f"时间范围: {stats['time_range'][0]:.6f}s - {stats['time_range'][1]:.6f}s\n"
+                    f"持续时间: {stats['duration']:.3f}s\n"
+                    f"唯一CAN ID数: {stats['unique_ids']}\n"
+                    f"接收报文: {stats['rx_count']}\n"
+                    f"发送报文: {stats['tx_count']}"
+                )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "导入失败",
+                f"无法解析文件:\n{file_path}\n\n错误信息:\n{str(e)}"
+            )
+            self.statusBar().showMessage("导入失败", 3000)
 
     def import_dbc(self):
         """Import DBC file"""
-        QMessageBox.information(self, "导入DBC", "导入DBC功能即将实现")
-        self.statusBar().showMessage("导入DBC功能即将实现", 3000)
+        # Open file dialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入DBC文件",
+            "",
+            "DBC文件 (*.dbc);;所有文件 (*.*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.statusBar().showMessage(f"正在加载DBC: {file_path}...")
+
+            # Add DBC to manager
+            db_name = self.dbc_manager.add_dbc(file_path, load=True)
+
+            # Get info
+            info = self.dbc_manager.get_dbc_info(db_name)
+
+            if info:
+                self.statusBar().showMessage(
+                    f"DBC加载成功: {db_name} ({info['message_count']} 个报文定义)",
+                    5000
+                )
+
+                # Show summary
+                QMessageBox.information(
+                    self,
+                    "DBC导入成功",
+                    f"数据库名称: {db_name}\n"
+                    f"文件路径: {info['file_path']}\n"
+                    f"报文定义数: {info['message_count']}\n"
+                    f"节点数: {info['node_count']}"
+                )
+        except ImportError as e:
+            QMessageBox.warning(
+                self,
+                "DBC功能不可用",
+                "DBC解析需要cantools库支持。\n\n"
+                "请安装: pip install cantools"
+            )
+            self.statusBar().showMessage("DBC功能不可用", 3000)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "导入失败",
+                f"无法加载DBC文件:\n{file_path}\n\n错误信息:\n{str(e)}"
+            )
+            self.statusBar().showMessage("DBC导入失败", 3000)
 
     def manage_dbc(self):
         """Manage loaded DBC files"""
