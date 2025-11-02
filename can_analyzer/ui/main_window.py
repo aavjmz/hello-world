@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QIcon
 from ui.message_table import MessageTableWidget
 from ui.signal_selection_dialog import SignalSelectionDialog
+from ui.filter_dialog import FilterDialog, MessageFilter
 from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
@@ -30,6 +31,7 @@ class MainWindow(QMainWindow):
         self.dbc_manager = DBCManager()
         self.signal_decoder = SignalDecoder(self.dbc_manager)
         self.current_messages = []
+        self.current_filter = None
 
         # Initialize UI components
         self.init_ui()
@@ -417,8 +419,36 @@ class MainWindow(QMainWindow):
 
     def configure_filter(self):
         """Configure message filter"""
-        QMessageBox.information(self, "过滤器", "过滤器配置功能即将实现")
-        self.statusBar().showMessage("过滤器配置功能即将实现", 3000)
+        # Check if messages are loaded
+        if not self.current_messages:
+            QMessageBox.warning(
+                self,
+                "无报文数据",
+                "请先导入CAN报文文件。"
+            )
+            return
+
+        # Show filter dialog
+        new_filter = FilterDialog.configure_filter(self.current_filter, self)
+
+        if new_filter is not None:
+            # Apply filter
+            self.current_filter = new_filter
+            self.message_table.set_filter(new_filter)
+
+            # Update status bar
+            if new_filter.is_active():
+                filtered_count = self.message_table.get_filtered_count()
+                total_count = self.message_table.get_message_count()
+                filter_desc = new_filter.get_description()
+
+                self.statusBar().showMessage(
+                    f"过滤器已应用: {filter_desc} | "
+                    f"显示 {filtered_count}/{total_count} 条报文",
+                    5000
+                )
+            else:
+                self.statusBar().showMessage("过滤器已清除", 3000)
 
     def close_view_tab(self, index):
         """Close a view tab"""

@@ -28,6 +28,7 @@ class MessageTableWidget(QTableWidget):
         self.messages: List[CANMessage] = []
         self.timestamp_formatter = TimestampFormatter(TimestampFormat.RAW)
         self.signal_decoder: Optional[SignalDecoder] = None
+        self.message_filter: Optional['MessageFilter'] = None  # Import will be added
 
         # Setup table
         self.setup_table()
@@ -112,8 +113,11 @@ class MessageTableWidget(QTableWidget):
         # Clear existing rows
         self.setRowCount(0)
 
-        # Add all messages
+        # Add all messages (with optional filtering)
         for idx, message in enumerate(self.messages):
+            # Apply filter if active
+            if self.message_filter and not self.message_filter.matches(message):
+                continue
             self.add_message_row(idx, message)
 
     def add_message_row(self, index: int, message: CANMessage):
@@ -288,4 +292,37 @@ class MessageTableWidget(QTableWidget):
         """
         self.signal_decoder = decoder
         # Refresh display to show/hide signal values
+        self.refresh_display()
+
+    def set_filter(self, message_filter: Optional['MessageFilter']):
+        """
+        Set message filter
+
+        Args:
+            message_filter: MessageFilter instance or None to clear filter
+        """
+        self.message_filter = message_filter
+        # Refresh display to apply filter
+        self.refresh_display()
+
+    def get_filtered_count(self) -> int:
+        """
+        Get count of messages that pass the current filter
+
+        Returns:
+            Number of messages that pass filter (or total if no filter)
+        """
+        if not self.message_filter:
+            return len(self.messages)
+
+        count = 0
+        for message in self.messages:
+            if self.message_filter.matches(message):
+                count += 1
+
+        return count
+
+    def clear_filter(self):
+        """Clear the current filter"""
+        self.message_filter = None
         self.refresh_display()
