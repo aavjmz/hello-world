@@ -12,6 +12,7 @@ from PyQt6.QtGui import QAction, QIcon
 from ui.message_table import MessageTableWidget
 from ui.signal_selection_dialog import SignalSelectionDialog
 from ui.filter_dialog import FilterDialog, MessageFilter
+from ui.dbc_manager_dialog import DBCManagerDialog
 from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
@@ -286,8 +287,11 @@ class MainWindow(QMainWindow):
 
     def manage_dbc(self):
         """Manage loaded DBC files"""
-        QMessageBox.information(self, "管理DBC", "DBC管理功能即将实现")
-        self.statusBar().showMessage("DBC管理功能即将实现", 3000)
+        DBCManagerDialog.manage_dbc(self.dbc_manager, self)
+
+        # Refresh message table in case active DBC changed
+        if self.current_messages:
+            self.message_table.refresh_display()
 
     def create_new_view(self):
         """Create a new signal view"""

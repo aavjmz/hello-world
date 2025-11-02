@@ -200,6 +200,10 @@ class DBCManager:
         """List all loaded DBC database names"""
         return list(self.databases.keys())
 
+    def list_dbc_names(self) -> List[str]:
+        """Alias for list_dbcs() - List all loaded DBC database names"""
+        return self.list_dbcs()
+
     def get_dbc_info(self, name: str) -> Optional[Dict]:
         """Get information about a DBC database"""
         db = self.databases.get(name)
