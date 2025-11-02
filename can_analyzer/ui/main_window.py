@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QIcon
 from ui.message_table import MessageTableWidget
+from ui.signal_selection_dialog import SignalSelectionDialog
+from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
 from utils.signal_decoder import SignalDecoder
@@ -287,8 +289,131 @@ class MainWindow(QMainWindow):
 
     def create_new_view(self):
         """Create a new signal view"""
-        QMessageBox.information(self, "新建视图", "新建视图功能即将实现")
-        self.statusBar().showMessage("新建视图功能即将实现", 3000)
+        # Check if messages are loaded
+        if not self.current_messages:
+            QMessageBox.warning(
+                self,
+                "无报文数据",
+                "请先导入CAN报文文件。"
+            )
+            return
+
+        # Check if DBC is loaded
+        active_dbc = self.dbc_manager.get_active()
+        if not active_dbc or not active_dbc.is_loaded():
+            QMessageBox.warning(
+                self,
+                "未加载DBC",
+                "请先导入DBC文件以解析信号。"
+            )
+            return
+
+        # Get unique CAN IDs from messages
+        unique_ids = list(set(msg.can_id for msg in self.current_messages))
+        unique_ids.sort()
+
+        # Show signal selection dialog
+        selected_signals = SignalSelectionDialog.select_signals(
+            self.dbc_manager,
+            unique_ids,
+            self
+        )
+
+        if not selected_signals:
+            return  # User cancelled or no signals selected
+
+        # Create plot widget
+        plot_widget = SignalPlotWidget()
+
+        if not plot_widget.is_available():
+            QMessageBox.warning(
+                self,
+                "绘图功能不可用",
+                "未找到可用的绘图库。\n\n"
+                "请安装以下任一库：\n"
+                "• PyQtGraph (推荐): pip install pyqtgraph\n"
+                "• Matplotlib: pip install matplotlib"
+            )
+            return
+
+        # Extract and plot signal data
+        self.statusBar().showMessage("正在提取信号数据...", 0)
+
+        try:
+            for signal_info in selected_signals:
+                can_id = signal_info['can_id']
+                signal_name = signal_info['signal_name']
+                message_name = signal_info['message_name']
+                unit = signal_info.get('unit', '')
+
+                # Filter messages by CAN ID
+                filtered_msgs = [msg for msg in self.current_messages if msg.can_id == can_id]
+
+                if not filtered_msgs:
+                    continue
+
+                # Extract times and values
+                times = []
+                values = []
+
+                for msg in filtered_msgs:
+                    # Decode message
+                    decoded = self.signal_decoder.decode_message(msg)
+                    if decoded and decoded.signals:
+                        # Find the signal
+                        for sig_val in decoded.signals.values():
+                            if sig_val.name == signal_name:
+                                times.append(msg.timestamp)
+                                values.append(sig_val.value)
+                                break
+
+                if times and values:
+                    # Create signal key
+                    signal_key = f"{message_name}.{signal_name}"
+
+                    # Add to plot
+                    plot_widget.add_signal(
+                        signal_key=signal_key,
+                        times=times,
+                        values=values,
+                        name=signal_name,
+                        unit=unit
+                    )
+
+            # Check if any signals were added
+            if plot_widget.get_signal_count() == 0:
+                QMessageBox.warning(
+                    self,
+                    "无信号数据",
+                    "未能从所选信号中提取数据。"
+                )
+                self.statusBar().showMessage("就绪")
+                return
+
+            # Set plot title
+            signal_count = plot_widget.get_signal_count()
+            plot_widget.set_title(f"信号曲线 ({signal_count} 个信号)")
+
+            # Auto-fit view
+            plot_widget.zoom_to_fit()
+
+            # Add as new tab
+            tab_name = f"视图 {self.view_tabs.count() + 1}"
+            self.view_tabs.addTab(plot_widget, tab_name)
+            self.view_tabs.setCurrentWidget(plot_widget)
+
+            self.statusBar().showMessage(
+                f"视图创建成功 ({signal_count} 个信号)",
+                3000
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "创建视图失败",
+                f"无法创建信号视图。\n\n错误信息:\n{str(e)}"
+            )
+            self.statusBar().showMessage("创建视图失败", 3000)
 
     def configure_filter(self):
         """Configure message filter"""
