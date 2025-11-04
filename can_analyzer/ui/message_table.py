@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QMenu
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QAction
 from typing import List, Optional
 from parsers.asc_parser import CANMessage
@@ -29,6 +29,13 @@ class MessageTableWidget(QTableWidget):
         self.timestamp_formatter = TimestampFormatter(TimestampFormat.RAW)
         self.signal_decoder: Optional[SignalDecoder] = None
         self.message_filter: Optional['MessageFilter'] = None  # Import will be added
+
+        # Batch loading state
+        self._pending_messages: List[CANMessage] = []
+        self._batch_index = 0
+        self._batch_size = 500  # Add 500 rows per batch
+        self._batch_timer = QTimer()
+        self._batch_timer.timeout.connect(self._process_batch)
 
         # Setup table
         self.setup_table()
@@ -75,13 +82,51 @@ class MessageTableWidget(QTableWidget):
 
     def set_messages(self, messages: List[CANMessage]):
         """
-        Set messages to display
+        Set messages to display (batch loaded to avoid UI freeze)
 
         Args:
             messages: List of CANMessage objects
         """
+        # Stop any ongoing batch loading
+        self._batch_timer.stop()
+
+        # Store messages
         self.messages = messages
-        self.refresh_display()
+
+        # Clear table
+        self.setRowCount(0)
+
+        # Apply filter to get messages to display
+        if self.message_filter:
+            self._pending_messages = [msg for msg in messages if self.message_filter.matches(msg)]
+        else:
+            self._pending_messages = messages.copy()
+
+        # Start batch loading
+        self._batch_index = 0
+
+        if self._pending_messages:
+            # Start timer to process batches (10ms interval)
+            self._batch_timer.start(10)
+
+    def _process_batch(self):
+        """Process one batch of messages"""
+        if self._batch_index >= len(self._pending_messages):
+            # All done
+            self._batch_timer.stop()
+            self._pending_messages.clear()
+            return
+
+        # Process one batch
+        end_index = min(self._batch_index + self._batch_size, len(self._pending_messages))
+
+        for i in range(self._batch_index, end_index):
+            message = self._pending_messages[i]
+            # Find original index in self.messages
+            original_index = self.messages.index(message) if message in self.messages else i
+            self.add_message_row(original_index, message)
+
+        self._batch_index = end_index
 
     def add_message(self, message: CANMessage):
         """
@@ -109,16 +154,9 @@ class MessageTableWidget(QTableWidget):
         self.setRowCount(0)
 
     def refresh_display(self):
-        """Refresh the entire table display"""
-        # Clear existing rows
-        self.setRowCount(0)
-
-        # Add all messages (with optional filtering)
-        for idx, message in enumerate(self.messages):
-            # Apply filter if active
-            if self.message_filter and not self.message_filter.matches(message):
-                continue
-            self.add_message_row(idx, message)
+        """Refresh the entire table display (batch loaded)"""
+        # Use set_messages for batch loading
+        self.set_messages(self.messages)
 
     def add_message_row(self, index: int, message: CANMessage):
         """

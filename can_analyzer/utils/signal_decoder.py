@@ -166,13 +166,21 @@ class SignalDecoder:
 
     def _format_signal_value(self, value: Any) -> Any:
         """Format signal value for display"""
-        if isinstance(value, float):
+        # Handle cantools NamedSignalValue objects
+        if hasattr(value, 'value'):
+            # Extract the actual value from NamedSignalValue
+            actual_value = value.value
+        else:
+            actual_value = value
+
+        # Format numeric values
+        if isinstance(actual_value, float):
             # Round to 2 decimal places for floats
-            if value == int(value):
-                return int(value)
+            if actual_value == int(actual_value):
+                return int(actual_value)
             else:
-                return round(value, 2)
-        return value
+                return round(actual_value, 2)
+        return actual_value
 
     def get_signal_summary(self, decoded: DecodedMessage,
                           max_signals: int = 3) -> str:
