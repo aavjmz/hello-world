@@ -216,11 +216,8 @@ class SignalPlotWidget(QWidget):
         """Refresh PyQtGraph plot"""
         import pyqtgraph as pg
 
-        # Clear existing plots
-        self.plot_widget.clear()
-
-        # Re-add legend
-        self.plot_widget.addLegend()
+        # Clear existing plot items (but keep legend)
+        self.plot_widget.getPlotItem().clearPlots()
 
         # Plot each signal
         for signal_key, data in self.plot_data.items():
