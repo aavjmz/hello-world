@@ -58,7 +58,12 @@ class BLFParser:
                     relative_timestamp = msg.timestamp - start_time
 
                     # Determine direction (default to Rx if not specified)
-                    direction = 'Tx' if msg.is_tx else 'Rx'
+                    # Note: python-can uses is_rx attribute, not is_tx
+                    if hasattr(msg, 'is_rx'):
+                        direction = 'Rx' if msg.is_rx else 'Tx'
+                    else:
+                        # Fallback if attribute doesn't exist
+                        direction = 'Rx'
 
                     # Create CANMessage object
                     can_message = CANMessage(
