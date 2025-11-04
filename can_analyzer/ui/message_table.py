@@ -33,7 +33,7 @@ class MessageTableWidget(QTableWidget):
         # Batch loading state
         self._pending_messages: List[CANMessage] = []
         self._batch_index = 0
-        self._batch_size = 500  # Add 500 rows per batch
+        self._batch_size = 100  # Add 100 rows per batch (reduced for better responsiveness)
         self._batch_timer = QTimer()
         self._batch_timer.timeout.connect(self._process_batch)
 
@@ -106,8 +106,8 @@ class MessageTableWidget(QTableWidget):
         self._batch_index = 0
 
         if self._pending_messages:
-            # Start timer to process batches (10ms interval)
-            self._batch_timer.start(10)
+            # Start timer to process batches (50ms interval for better UI responsiveness)
+            self._batch_timer.start(50)
 
     def _process_batch(self):
         """Process one batch of messages"""
