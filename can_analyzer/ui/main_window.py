@@ -204,17 +204,19 @@ class MainWindow(QMainWindow):
         self.import_worker.import_finished.connect(self._on_import_finished)
         self.import_worker.import_failed.connect(self._on_import_failed)
 
-        # Create progress dialog
+        # Create progress dialog with real progress bar (0-100)
         self.import_progress_dialog = QProgressDialog(
             "正在导入文件...",
             "取消",
-            0, 0,  # indeterminate progress
+            0, 100,  # Progress from 0 to 100%
             self
         )
         self.import_progress_dialog.setWindowTitle("导入报文")
-        self.import_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.import_progress_dialog.setWindowModality(Qt.WindowModality.NonModal)  # Allow main window interaction
         self.import_progress_dialog.setMinimumDuration(0)  # Show immediately
+        self.import_progress_dialog.setValue(0)  # Start at 0%
         self.import_progress_dialog.canceled.connect(self._on_import_cancelled)
+        self.import_progress_dialog.show()  # Show explicitly for NonModal
 
         # Store file path for error reporting
         self.current_import_file = file_path
@@ -223,10 +225,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"正在导入文件: {file_path}...")
         self.import_worker.start()
 
-    def _on_import_progress(self, message: str):
+    def _on_import_progress(self, message: str, percentage: int):
         """Handle progress update from worker"""
         if self.import_progress_dialog:
             self.import_progress_dialog.setLabelText(message)
+            self.import_progress_dialog.setValue(percentage)
 
     def _on_import_finished(self, messages: list, stats: dict):
         """Handle successful import completion"""

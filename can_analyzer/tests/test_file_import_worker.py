@@ -123,9 +123,11 @@ class TestFileImportWorker(unittest.TestCase):
 
         # Connect signal to capture progress
         progress_messages = []
+        progress_percentages = []
 
-        def capture_progress(msg):
+        def capture_progress(msg, percentage):
             progress_messages.append(msg)
+            progress_percentages.append(percentage)
 
         worker.progress_updated.connect(capture_progress)
 
@@ -135,6 +137,14 @@ class TestFileImportWorker(unittest.TestCase):
         # Verify progress messages were emitted
         self.assertGreater(len(progress_messages), 0)
         self.assertIn("正在读取文件", progress_messages[0])
+
+        # Verify percentages are in valid range (0-100)
+        for pct in progress_percentages:
+            self.assertGreaterEqual(pct, 0)
+            self.assertLessEqual(pct, 100)
+
+        # Verify percentages increase
+        self.assertEqual(progress_percentages[-1], 100)  # Last one should be 100%
 
     def test_cancellation_during_import(self):
         """Test that cancellation stops import"""
