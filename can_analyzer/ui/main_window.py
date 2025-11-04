@@ -5,7 +5,7 @@ Main Window UI for CAN Analyzer
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMenuBar, QToolBar, QStatusBar,
-    QTabWidget, QMessageBox, QFileDialog
+    QTabWidget, QMessageBox, QFileDialog, QProgressDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QIcon
@@ -17,6 +17,7 @@ from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
 from utils.signal_decoder import SignalDecoder
+from utils.file_import_worker import FileImportWorker
 
 
 class MainWindow(QMainWindow):
@@ -33,6 +34,10 @@ class MainWindow(QMainWindow):
         self.signal_decoder = SignalDecoder(self.dbc_manager)
         self.current_messages = []
         self.current_filter = None
+
+        # Background import worker
+        self.import_worker = None
+        self.import_progress_dialog = None
 
         # Initialize UI components
         self.init_ui()
@@ -179,7 +184,7 @@ class MainWindow(QMainWindow):
 
     # Slot methods
     def import_messages(self):
-        """Import CAN messages from file"""
+        """Import CAN messages from file (async with progress dialog)"""
         # Open file dialog
         file_path, _ = QFileDialog.getOpenFileName(
             self,
@@ -191,46 +196,103 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
-        try:
-            self.statusBar().showMessage(f"正在解析文件: {file_path}...")
+        # Create and start worker thread
+        self.import_worker = FileImportWorker(self.message_parser, file_path)
 
-            # Parse file
-            messages = self.message_parser.parse_file(file_path)
-            self.current_messages = messages
+        # Connect signals
+        self.import_worker.progress_updated.connect(self._on_import_progress)
+        self.import_worker.import_finished.connect(self._on_import_finished)
+        self.import_worker.import_failed.connect(self._on_import_failed)
 
-            # Display messages in table
-            self.message_table.set_messages(messages)
+        # Create progress dialog
+        self.import_progress_dialog = QProgressDialog(
+            "正在导入文件...",
+            "取消",
+            0, 0,  # indeterminate progress
+            self
+        )
+        self.import_progress_dialog.setWindowTitle("导入报文")
+        self.import_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.import_progress_dialog.setMinimumDuration(0)  # Show immediately
+        self.import_progress_dialog.canceled.connect(self._on_import_cancelled)
 
-            # Get statistics
-            parser = self.message_parser.get_parser()
-            if parser:
-                stats = parser.get_statistics()
-                msg = (f"导入成功! "
-                       f"共 {stats['total_messages']} 条报文, "
-                       f"时间范围: {stats['duration']:.3f}s, "
-                       f"唯一ID: {stats['unique_ids']} 个")
-                self.statusBar().showMessage(msg, 5000)
+        # Store file path for error reporting
+        self.current_import_file = file_path
 
-                # Show summary dialog
-                QMessageBox.information(
-                    self,
-                    "导入成功",
-                    f"文件: {file_path}\n\n"
-                    f"总报文数: {stats['total_messages']}\n"
-                    f"时间范围: {stats['time_range'][0]:.6f}s - {stats['time_range'][1]:.6f}s\n"
-                    f"持续时间: {stats['duration']:.3f}s\n"
-                    f"唯一CAN ID数: {stats['unique_ids']}\n"
-                    f"接收报文: {stats['rx_count']}\n"
-                    f"发送报文: {stats['tx_count']}"
-                )
+        # Start import
+        self.statusBar().showMessage(f"正在导入文件: {file_path}...")
+        self.import_worker.start()
 
-        except Exception as e:
-            QMessageBox.critical(
+    def _on_import_progress(self, message: str):
+        """Handle progress update from worker"""
+        if self.import_progress_dialog:
+            self.import_progress_dialog.setLabelText(message)
+
+    def _on_import_finished(self, messages: list, stats: dict):
+        """Handle successful import completion"""
+        # Close progress dialog
+        if self.import_progress_dialog:
+            self.import_progress_dialog.close()
+            self.import_progress_dialog = None
+
+        # Store messages
+        self.current_messages = messages
+
+        # Display messages in table
+        self.message_table.set_messages(messages)
+
+        # Update status bar
+        if stats:
+            msg = (f"导入成功! "
+                   f"共 {stats['total_messages']} 条报文, "
+                   f"时间范围: {stats['duration']:.3f}s, "
+                   f"唯一ID: {stats['unique_ids']} 个")
+            self.statusBar().showMessage(msg, 5000)
+
+            # Show summary dialog
+            QMessageBox.information(
                 self,
-                "导入失败",
-                f"无法解析文件:\n{file_path}\n\n错误信息:\n{str(e)}"
+                "导入成功",
+                f"文件: {self.current_import_file}\n\n"
+                f"总报文数: {stats['total_messages']}\n"
+                f"时间范围: {stats['time_range'][0]:.6f}s - {stats['time_range'][1]:.6f}s\n"
+                f"持续时间: {stats['duration']:.3f}s\n"
+                f"唯一CAN ID数: {stats['unique_ids']}\n"
+                f"接收报文: {stats['rx_count']}\n"
+                f"发送报文: {stats['tx_count']}"
             )
-            self.statusBar().showMessage("导入失败", 3000)
+        else:
+            self.statusBar().showMessage(f"导入成功! 共 {len(messages)} 条报文", 5000)
+
+        # Clean up worker
+        self.import_worker = None
+
+    def _on_import_failed(self, error_message: str):
+        """Handle import failure"""
+        # Close progress dialog
+        if self.import_progress_dialog:
+            self.import_progress_dialog.close()
+            self.import_progress_dialog = None
+
+        # Show error message
+        QMessageBox.critical(
+            self,
+            "导入失败",
+            f"无法解析文件:\n{self.current_import_file}\n\n错误信息:\n{error_message}"
+        )
+        self.statusBar().showMessage("导入失败", 3000)
+
+        # Clean up worker
+        self.import_worker = None
+
+    def _on_import_cancelled(self):
+        """Handle import cancellation"""
+        if self.import_worker:
+            self.import_worker.cancel()
+            self.import_worker.wait()  # Wait for thread to finish
+            self.import_worker = None
+
+        self.statusBar().showMessage("导入已取消", 3000)
 
     def import_dbc(self):
         """Import DBC file"""
