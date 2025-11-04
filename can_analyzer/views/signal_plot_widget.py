@@ -6,6 +6,7 @@ Supports both PyQtGraph (preferred) and Matplotlib (fallback) backends
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMessageBox
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 
@@ -57,15 +58,39 @@ class SignalPlotWidget(QWidget):
         """Initialize PyQtGraph plot widget"""
         import pyqtgraph as pg
 
+        # Configure font for Chinese characters
+        font = QFont()
+        # Try to use common Chinese fonts available on different platforms
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'STHeiti', 'PingFang SC', 'Arial Unicode MS', 'sans-serif']
+        for font_name in chinese_fonts:
+            font.setFamily(font_name)
+            if font.family() == font_name or font.family() in chinese_fonts:
+                break
+        font.setPointSize(10)
+
+        # Set default font for PyQtGraph
+        pg.setConfigOptions(antialias=True)
+
         # Create plot widget
         self.plot_widget = pg.PlotWidget()
 
         # Configure plot
         self.plot_widget.setBackground('w')  # White background
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.setLabel('bottom', '时间', units='s')
-        self.plot_widget.setLabel('left', '信号值')
-        self.plot_widget.setTitle('信号曲线')
+
+        # Set labels with font
+        axis_font = QFont(font)
+        axis_font.setPointSize(10)
+
+        styles = {'color': 'black', 'font-size': '12pt', 'font-family': font.family()}
+        self.plot_widget.setLabel('bottom', '时间 (s)', **styles)
+        self.plot_widget.setLabel('left', '信号值', **styles)
+
+        # Set title with font
+        title_font = QFont(font)
+        title_font.setPointSize(12)
+        title_font.setBold(True)
+        self.plot_widget.setTitle('信号曲线', color='black', size='14pt')
 
         # Enable mouse interaction
         self.plot_widget.setMouseEnabled(x=True, y=True)  # Enable pan
@@ -80,6 +105,28 @@ class SignalPlotWidget(QWidget):
         """Initialize Matplotlib plot widget"""
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
         from matplotlib.figure import Figure
+        import matplotlib.pyplot as plt
+        import matplotlib
+
+        # Configure matplotlib to use Chinese fonts
+        # Try common Chinese fonts on different platforms
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'STHeiti', 'PingFang SC', 'Arial Unicode MS', 'DejaVu Sans']
+
+        font_found = False
+        for font_name in chinese_fonts:
+            try:
+                matplotlib.rcParams['font.sans-serif'] = [font_name] + matplotlib.rcParams['font.sans-serif']
+                font_found = True
+                break
+            except:
+                continue
+
+        if not font_found:
+            # Fallback: use default sans-serif and hope it supports Chinese
+            matplotlib.rcParams['font.sans-serif'] = ['sans-serif']
+
+        # Fix negative sign display issue
+        matplotlib.rcParams['axes.unicode_minus'] = False
 
         # Create figure and canvas
         self.figure = Figure(figsize=(8, 6))
@@ -89,10 +136,10 @@ class SignalPlotWidget(QWidget):
         # Add toolbar
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-        # Configure axes
-        self.axes.set_xlabel('时间 (s)')
-        self.axes.set_ylabel('信号值')
-        self.axes.set_title('信号曲线')
+        # Configure axes with Chinese labels
+        self.axes.set_xlabel('时间 (s)', fontsize=10)
+        self.axes.set_ylabel('信号值', fontsize=10)
+        self.axes.set_title('信号曲线', fontsize=12, fontweight='bold')
         self.axes.grid(True, alpha=0.3)
 
         self.layout.addWidget(self.toolbar)
@@ -208,15 +255,16 @@ class SignalPlotWidget(QWidget):
                 label=label
             )
 
-        # Re-configure axes
-        self.axes.set_xlabel('时间 (s)')
-        self.axes.set_ylabel('信号值')
-        self.axes.set_title('信号曲线')
+        # Re-configure axes with Chinese labels
+        self.axes.set_xlabel('时间 (s)', fontsize=10)
+        self.axes.set_ylabel('信号值', fontsize=10)
+        self.axes.set_title('信号曲线', fontsize=12, fontweight='bold')
         self.axes.grid(True, alpha=0.3)
 
         # Add legend if there are signals
         if self.plot_data:
-            self.axes.legend()
+            # Set legend with font properties
+            self.axes.legend(prop={'size': 9})
 
         # Redraw
         self.canvas.draw()
