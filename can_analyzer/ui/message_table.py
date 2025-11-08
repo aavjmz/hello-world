@@ -46,6 +46,13 @@ class MessageTableWidget(QTableWidget):
         self._row_height_estimate = 25  # Estimated row height in pixels
         self._updating_virtual_view = False  # Flag to prevent recursive updates
 
+        # Scroll throttle timer for smooth scrolling
+        self._scroll_update_timer = QTimer()
+        self._scroll_update_timer.setSingleShot(True)
+        self._scroll_update_timer.timeout.connect(self._delayed_scroll_update)
+        self._scroll_update_pending = False
+        self._last_scroll_value = 0
+
         # Setup table
         self.setup_table()
 
@@ -240,11 +247,16 @@ class MessageTableWidget(QTableWidget):
         if self.signal_decoder:
             decoded = self.signal_decoder.decode_message(message)
             if decoded:
-                signal_str = self.signal_decoder.get_signal_summary(decoded, max_signals=3)
+                signal_str = self.signal_decoder.get_signal_summary(decoded, max_signals=2)
+                # Add expand indicator if there are signals
+                if decoded.get_signal_count() > 0:
+                    signal_str += " [...]"
 
         item = QTableWidgetItem(signal_str)
         if signal_str:
             item.setForeground(QColor(0, 100, 150))  # Dark cyan for signals
+            # Add tooltip to indicate it's clickable
+            item.setToolTip("双击查看详细信号信息")
         self.setItem(row, 7, item)
 
     def get_selected_message(self) -> Optional[CANMessage]:
@@ -283,12 +295,50 @@ class MessageTableWidget(QTableWidget):
     def on_cell_double_clicked(self, row: int, column: int):
         """Handle cell double click"""
         message = self.get_message_at(row)
-        if message:
-            self.message_double_clicked.emit(message)
+        if not message:
+            return
+
+        # If signal column (column 7) is double-clicked and has decoder, show signal details
+        if column == 7 and self.signal_decoder:
+            # Check if message has signals
+            decoded = self.signal_decoder.decode_message(message)
+            if decoded and decoded.get_signal_count() > 0:
+                self.show_signal_details(message)
+                return
+
+        # Otherwise, emit normal double-click signal
+        self.message_double_clicked.emit(message)
+
+    def show_signal_details(self, message: CANMessage):
+        """
+        Show detailed signal information dialog
+
+        Args:
+            message: CANMessage to show details for
+        """
+        if not self.signal_decoder:
+            return
+
+        from ui.signal_details_dialog import SignalDetailsDialog
+
+        dialog = SignalDetailsDialog(message, self.signal_decoder, self)
+        dialog.exec()
 
     def show_context_menu(self, pos):
         """Show context menu"""
         menu = QMenu(self)
+
+        # Get selected message
+        message = self.get_selected_message()
+
+        # Signal details action (if signal decoder is available and message has signals)
+        if message and self.signal_decoder:
+            decoded = self.signal_decoder.decode_message(message)
+            if decoded and decoded.get_signal_count() > 0:
+                signal_details_action = QAction("查看信号详情", self)
+                signal_details_action.triggered.connect(lambda: self.show_signal_details(message))
+                menu.addAction(signal_details_action)
+                menu.addSeparator()
 
         # Copy action
         copy_action = QAction("复制", self)
@@ -489,7 +539,7 @@ class MessageTableWidget(QTableWidget):
 
     def _on_scroll(self, value):
         """
-        Handle scroll event for virtual scrolling
+        Handle scroll event for virtual scrolling (with throttling)
 
         Args:
             value: Scroll position value
@@ -497,8 +547,28 @@ class MessageTableWidget(QTableWidget):
         if not self._use_virtual_scrolling or self._updating_virtual_view:
             return
 
-        # Update the virtual window based on scroll position
-        self._update_virtual_window()
+        # Store the scroll value
+        self._last_scroll_value = value
+
+        # Use throttling to avoid excessive updates during fast scrolling
+        if not self._scroll_update_timer.isActive():
+            # Update immediately for first scroll
+            self._update_virtual_window()
+            # Start timer to throttle subsequent updates
+            self._scroll_update_timer.start(50)  # 50ms throttle (20 FPS)
+        else:
+            # Mark that an update is pending
+            self._scroll_update_pending = True
+
+    def _delayed_scroll_update(self):
+        """
+        Delayed scroll update callback (throttled)
+        """
+        if self._scroll_update_pending:
+            self._scroll_update_pending = False
+            self._update_virtual_window()
+            # Restart timer for next throttle period
+            self._scroll_update_timer.start(50)
 
     def _update_virtual_window(self):
         """
@@ -540,7 +610,8 @@ class MessageTableWidget(QTableWidget):
             new_end = min(total_messages, center_index + rows_visible // 2 + self._visible_buffer_size)
 
             # Only update if the range has changed significantly (to avoid too many updates)
-            if abs(new_start - self._visible_rows_start) > 10 or abs(new_end - self._visible_rows_end) > 10:
+            # Increased threshold from 10 to 20 for smoother scrolling
+            if abs(new_start - self._visible_rows_start) > 20 or abs(new_end - self._visible_rows_end) > 20:
                 self._load_virtual_window(new_start, new_end)
 
         finally:
@@ -548,28 +619,35 @@ class MessageTableWidget(QTableWidget):
 
     def _load_virtual_window(self, start_index: int, end_index: int):
         """
-        Load a specific window of rows into the table
+        Load a specific window of rows into the table (optimized for smooth scrolling)
 
         Args:
             start_index: Start index in the message list
             end_index: End index in the message list
         """
-        # Clear current table rows
-        self.setRowCount(0)
+        # Disable updates during batch operation for better performance
+        self.setUpdatesEnabled(False)
+        try:
+            # Clear current table rows
+            self.setRowCount(0)
 
-        # Load rows in the window
-        for i in range(start_index, end_index):
-            if i >= len(self._pending_messages):
-                break
+            # Load rows in the window
+            for i in range(start_index, end_index):
+                if i >= len(self._pending_messages):
+                    break
 
-            message = self._pending_messages[i]
-            # Find original index in self.messages
-            original_index = self.messages.index(message) if message in self.messages else i
-            self.add_message_row(original_index, message)
+                message = self._pending_messages[i]
+                # Find original index in self.messages
+                original_index = self.messages.index(message) if message in self.messages else i
+                self.add_message_row(original_index, message)
 
-        # Update visible range
-        self._visible_rows_start = start_index
-        self._visible_rows_end = end_index
+            # Update visible range
+            self._visible_rows_start = start_index
+            self._visible_rows_end = end_index
+
+        finally:
+            # Re-enable updates
+            self.setUpdatesEnabled(True)
 
     def _init_virtual_scrolling(self):
         """
