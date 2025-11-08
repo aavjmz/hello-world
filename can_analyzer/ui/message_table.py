@@ -37,12 +37,24 @@ class MessageTableWidget(QTableWidget):
         self._batch_timer = QTimer()
         self._batch_timer.timeout.connect(self._process_batch)
 
+        # Virtual scrolling state (for large datasets)
+        self._use_virtual_scrolling = False
+        self._virtual_scroll_threshold = 10000  # Use virtual scrolling for >10k messages
+        self._visible_buffer_size = 30  # Rows above and below visible area
+        self._visible_rows_start = 0  # First visible row index in data
+        self._visible_rows_end = 0    # Last visible row index in data
+        self._row_height_estimate = 25  # Estimated row height in pixels
+        self._updating_virtual_view = False  # Flag to prevent recursive updates
+
         # Setup table
         self.setup_table()
 
         # Connect signals
         self.itemSelectionChanged.connect(self.on_selection_changed)
         self.cellDoubleClicked.connect(self.on_cell_double_clicked)
+
+        # Connect scroll events for virtual scrolling
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
     def setup_table(self):
         """Setup table properties and headers"""
@@ -82,7 +94,7 @@ class MessageTableWidget(QTableWidget):
 
     def set_messages(self, messages: List[CANMessage]):
         """
-        Set messages to display (batch loaded to avoid UI freeze)
+        Set messages to display (batch loaded or virtual scrolling based on size)
 
         Args:
             messages: List of CANMessage objects
@@ -102,12 +114,21 @@ class MessageTableWidget(QTableWidget):
         else:
             self._pending_messages = messages.copy()
 
-        # Start batch loading
-        self._batch_index = 0
+        # Determine whether to use virtual scrolling based on message count
+        total_to_display = len(self._pending_messages)
 
-        if self._pending_messages:
-            # Start timer to process batches (50ms interval for better UI responsiveness)
-            self._batch_timer.start(50)
+        if total_to_display >= self._virtual_scroll_threshold:
+            # Use virtual scrolling for large datasets
+            self._use_virtual_scrolling = True
+            self._init_virtual_scrolling()
+        else:
+            # Use batch loading for smaller datasets
+            self._use_virtual_scrolling = False
+            self._batch_index = 0
+
+            if self._pending_messages:
+                # Start timer to process batches (50ms interval for better UI responsiveness)
+                self._batch_timer.start(50)
 
     def _process_batch(self):
         """Process one batch of messages"""
@@ -163,7 +184,7 @@ class MessageTableWidget(QTableWidget):
         Add a message row to the table
 
         Args:
-            index: Message index
+            index: Message index in the original messages list
             message: CANMessage object
         """
         row = self.rowCount()
@@ -172,6 +193,8 @@ class MessageTableWidget(QTableWidget):
         # Column 0: Index
         item = QTableWidgetItem(str(index + 1))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Store original message index for virtual scrolling
+        item.setData(Qt.ItemDataRole.UserRole, index)
         self.setItem(row, 0, item)
 
         # Column 1: Timestamp
@@ -227,21 +250,35 @@ class MessageTableWidget(QTableWidget):
     def get_selected_message(self) -> Optional[CANMessage]:
         """Get the currently selected message"""
         current_row = self.currentRow()
-        if 0 <= current_row < len(self.messages):
-            return self.messages[current_row]
-        return None
+        return self.get_message_at(current_row)
 
     def get_message_at(self, row: int) -> Optional[CANMessage]:
         """Get message at specific row"""
-        if 0 <= row < len(self.messages):
-            return self.messages[row]
+        if row < 0 or row >= self.rowCount():
+            return None
+
+        # Get the original message index from the first column
+        item = self.item(row, 0)
+        if item:
+            message_index = item.data(Qt.ItemDataRole.UserRole)
+            if message_index is not None and 0 <= message_index < len(self.messages):
+                return self.messages[message_index]
+
         return None
 
     def on_selection_changed(self):
         """Handle selection change"""
         current_row = self.currentRow()
         if current_row >= 0:
-            self.message_selected.emit(current_row)
+            # Get the original message index
+            item = self.item(current_row, 0)
+            if item:
+                message_index = item.data(Qt.ItemDataRole.UserRole)
+                if message_index is not None:
+                    self.message_selected.emit(message_index)
+                else:
+                    # Fallback for backward compatibility
+                    self.message_selected.emit(current_row)
 
     def on_cell_double_clicked(self, row: int, column: int):
         """Handle cell double click"""
@@ -316,10 +353,53 @@ class MessageTableWidget(QTableWidget):
         return len(self.messages)
 
     def scroll_to_message(self, index: int):
-        """Scroll to specific message index"""
-        if 0 <= index < self.rowCount():
-            self.scrollToItem(self.item(index, 0))
-            self.selectRow(index)
+        """
+        Scroll to specific message index
+
+        Args:
+            index: Index in the messages list (not row number)
+        """
+        if index < 0 or index >= len(self.messages):
+            return
+
+        if self._use_virtual_scrolling:
+            # For virtual scrolling, we need to update the window to include this message
+            # Calculate the scroll position for this message
+            total_messages = len(self._pending_messages)
+            if total_messages > 0:
+                # Find the index in pending_messages
+                try:
+                    pending_index = self._pending_messages.index(self.messages[index])
+                except ValueError:
+                    # Message not in pending (filtered out)
+                    return
+
+                # Calculate scroll percentage
+                scroll_percentage = pending_index / max(1, total_messages - 1)
+
+                # Update scrollbar to trigger window update
+                scrollbar = self.verticalScrollBar()
+                scroll_value = int(scroll_percentage * scrollbar.maximum())
+                scrollbar.setValue(scroll_value)
+
+                # Force update the virtual window
+                self._update_virtual_window()
+
+                # Now find the row in the current table
+                for row in range(self.rowCount()):
+                    item = self.item(row, 0)
+                    if item and item.data(Qt.ItemDataRole.UserRole) == index:
+                        self.scrollToItem(item)
+                        self.selectRow(row)
+                        break
+        else:
+            # For batch loading, find the row with this message index
+            for row in range(self.rowCount()):
+                item = self.item(row, 0)
+                if item and item.data(Qt.ItemDataRole.UserRole) == index:
+                    self.scrollToItem(item)
+                    self.selectRow(row)
+                    break
 
     def set_signal_decoder(self, decoder: Optional[SignalDecoder]):
         """
@@ -406,3 +486,108 @@ class MessageTableWidget(QTableWidget):
         if self.message_filter:
             return [msg for msg in self.messages if self.message_filter.matches(msg)]
         return self.messages
+
+    def _on_scroll(self, value):
+        """
+        Handle scroll event for virtual scrolling
+
+        Args:
+            value: Scroll position value
+        """
+        if not self._use_virtual_scrolling or self._updating_virtual_view:
+            return
+
+        # Update the virtual window based on scroll position
+        self._update_virtual_window()
+
+    def _update_virtual_window(self):
+        """
+        Update the visible window of rows for virtual scrolling.
+        Only loads rows that are visible or in the buffer zone.
+        """
+        if not self._use_virtual_scrolling or self._updating_virtual_view:
+            return
+
+        if not self._pending_messages:
+            return
+
+        # Prevent recursive updates
+        self._updating_virtual_view = True
+
+        try:
+            # Calculate visible row range based on viewport
+            viewport_height = self.viewport().height()
+            rows_visible = max(30, int(viewport_height / self._row_height_estimate))
+
+            # Get scroll position
+            scrollbar = self.verticalScrollBar()
+            scroll_value = scrollbar.value()
+            scroll_max = scrollbar.maximum()
+
+            # Calculate which message indices should be visible
+            total_messages = len(self._pending_messages)
+
+            if scroll_max > 0:
+                # Calculate position as percentage
+                scroll_percentage = scroll_value / scroll_max
+                # Calculate center of visible window
+                center_index = int(scroll_percentage * total_messages)
+            else:
+                center_index = 0
+
+            # Calculate start and end indices with buffer
+            new_start = max(0, center_index - rows_visible // 2 - self._visible_buffer_size)
+            new_end = min(total_messages, center_index + rows_visible // 2 + self._visible_buffer_size)
+
+            # Only update if the range has changed significantly (to avoid too many updates)
+            if abs(new_start - self._visible_rows_start) > 10 or abs(new_end - self._visible_rows_end) > 10:
+                self._load_virtual_window(new_start, new_end)
+
+        finally:
+            self._updating_virtual_view = False
+
+    def _load_virtual_window(self, start_index: int, end_index: int):
+        """
+        Load a specific window of rows into the table
+
+        Args:
+            start_index: Start index in the message list
+            end_index: End index in the message list
+        """
+        # Clear current table rows
+        self.setRowCount(0)
+
+        # Load rows in the window
+        for i in range(start_index, end_index):
+            if i >= len(self._pending_messages):
+                break
+
+            message = self._pending_messages[i]
+            # Find original index in self.messages
+            original_index = self.messages.index(message) if message in self.messages else i
+            self.add_message_row(original_index, message)
+
+        # Update visible range
+        self._visible_rows_start = start_index
+        self._visible_rows_end = end_index
+
+    def _init_virtual_scrolling(self):
+        """
+        Initialize virtual scrolling for large datasets.
+        Sets up the initial visible window.
+        """
+        if not self._pending_messages:
+            return
+
+        # Calculate initial visible window size
+        viewport_height = self.viewport().height()
+        initial_rows = max(60, int(viewport_height / self._row_height_estimate) + self._visible_buffer_size * 2)
+
+        # Load initial window
+        end_index = min(initial_rows, len(self._pending_messages))
+        self._load_virtual_window(0, end_index)
+
+        # Configure scrollbar to represent total data size
+        # Note: We'll use a proxy approach where scrollbar maximum represents data range
+        total_messages = len(self._pending_messages)
+        self.verticalScrollBar().setMaximum(total_messages - 1)

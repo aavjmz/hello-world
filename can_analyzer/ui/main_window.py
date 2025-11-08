@@ -645,23 +645,37 @@ class MainWindow(QMainWindow):
         # Show dialog
         search_dialog.exec()
 
-    def on_search_result_found(self, row_index: int, message):
+    def on_search_result_found(self, displayed_index: int, message):
         """
         Handle search result found
 
         Args:
-            row_index: Row index in the table
+            displayed_index: Index in the displayed messages list
             message: The found message
         """
         # Clear previous highlight
         self.message_table.clear_highlight()
 
-        # Highlight the found row
-        self.message_table.highlight_row(row_index)
+        # Find the actual message index in the full messages list
+        try:
+            message_index = self.current_messages.index(message)
+        except ValueError:
+            # Message not found (shouldn't happen)
+            return
+
+        # Scroll to the message (handles virtual scrolling automatically)
+        self.message_table.scroll_to_message(message_index)
+
+        # Find the row in the current table view and highlight it
+        for row in range(self.message_table.rowCount()):
+            item = self.message_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == message_index:
+                self.message_table.highlight_row(row)
+                break
 
         # Update status bar
         self.statusBar().showMessage(
-            f"找到匹配项: 第{row_index + 1}行 | ID: 0x{message.can_id:03X}",
+            f"找到匹配项: 第{message_index + 1}行 | ID: 0x{message.can_id:03X}",
             5000
         )
 
