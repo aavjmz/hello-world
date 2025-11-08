@@ -101,6 +101,14 @@ class MainWindow(QMainWindow):
         dbc_manage_action.triggered.connect(self.manage_dbc)
         dbc_menu.addAction(dbc_manage_action)
 
+        dbc_menu.addSeparator()
+
+        refresh_decode_action = QAction("刷新解码(&R)", self)
+        refresh_decode_action.setShortcut("F5")
+        refresh_decode_action.setStatusTip("使用当前激活的DBC重新解码所有报文")
+        refresh_decode_action.triggered.connect(self.refresh_message_decode)
+        dbc_menu.addAction(refresh_decode_action)
+
         # View Menu
         view_menu = menubar.addMenu("视图(&V)")
 
@@ -349,6 +357,15 @@ class MainWindow(QMainWindow):
                     5000
                 )
 
+                # Refresh message table to decode with new DBC
+                if self.current_messages:
+                    self.message_table.refresh_display()
+                    decoded_count = sum(1 for msg in self.current_messages
+                                      if self.signal_decoder.decode_message(msg) is not None)
+                    refresh_msg = f"\n\n已刷新报文表格，成功解码 {decoded_count} 条报文"
+                else:
+                    refresh_msg = ""
+
                 # Show summary
                 QMessageBox.information(
                     self,
@@ -357,6 +374,7 @@ class MainWindow(QMainWindow):
                     f"文件路径: {info['file_path']}\n"
                     f"报文定义数: {info['message_count']}\n"
                     f"节点数: {info['node_count']}"
+                    f"{refresh_msg}"
                 )
         except ImportError as e:
             QMessageBox.warning(
@@ -381,6 +399,59 @@ class MainWindow(QMainWindow):
         # Refresh message table in case active DBC changed
         if self.current_messages:
             self.message_table.refresh_display()
+
+            # Count decoded messages
+            decoded_count = sum(1 for msg in self.current_messages
+                              if self.signal_decoder.decode_message(msg) is not None)
+
+            if decoded_count > 0:
+                self.statusBar().showMessage(
+                    f"已刷新报文表格，成功解码 {decoded_count} 条报文",
+                    5000
+                )
+
+    def refresh_message_decode(self):
+        """Refresh message table to re-decode all messages with current active DBC"""
+        # Check if messages are loaded
+        if not self.current_messages:
+            QMessageBox.information(
+                self,
+                "无报文数据",
+                "当前没有已加载的报文。\n\n请先导入CAN报文文件。"
+            )
+            return
+
+        # Check if DBC is loaded
+        if not self.dbc_manager.has_active_dbc():
+            QMessageBox.information(
+                self,
+                "无激活的DBC",
+                "当前没有激活的DBC数据库。\n\n"
+                "请先导入并激活DBC文件。"
+            )
+            return
+
+        # Refresh display
+        self.message_table.refresh_display()
+
+        # Count decoded messages
+        decoded_count = sum(1 for msg in self.current_messages
+                          if self.signal_decoder.decode_message(msg) is not None)
+
+        # Show result
+        QMessageBox.information(
+            self,
+            "刷新完成",
+            f"已使用当前激活的DBC重新解码所有报文。\n\n"
+            f"总报文数: {len(self.current_messages)}\n"
+            f"成功解码: {decoded_count} 条\n"
+            f"解码率: {decoded_count * 100 // len(self.current_messages)}%"
+        )
+
+        self.statusBar().showMessage(
+            f"刷新完成: 成功解码 {decoded_count}/{len(self.current_messages)} 条报文",
+            5000
+        )
 
     def create_new_view(self):
         """Create a new signal view"""

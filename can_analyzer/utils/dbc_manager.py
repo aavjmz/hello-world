@@ -240,6 +240,10 @@ class DBCManager:
         """Get the active DBC database name"""
         return self._active_db
 
+    def has_active_dbc(self) -> bool:
+        """Check if there is an active DBC database loaded"""
+        return self._active_db is not None and self._active_db in self.databases
+
     def decode_message(self, can_id: int, data: bytes, db_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Decode a CAN message
