@@ -84,15 +84,15 @@ class VirtualScrollDataWorker(QThread):
     def run(self):
         """Main worker loop"""
         while True:
+            request = None  # Initialize request to None
+
             # Check for stop signal
             with QMutexLocker(self._mutex):
                 if self._should_stop:
                     break
 
                 # Get next request
-                if not self._requested_ranges:
-                    pass  # No requests, continue loop
-                else:
+                if self._requested_ranges:
                     request = self._requested_ranges.pop(0)
 
             if request:
@@ -104,8 +104,6 @@ class VirtualScrollDataWorker(QThread):
                 # Emit signal with prepared data
                 if row_data_list:
                     self.data_ready.emit(start_index, end_index, row_data_list)
-
-                request = None
 
             # Small sleep to avoid busy waiting
             self.msleep(10)

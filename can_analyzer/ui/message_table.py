@@ -732,19 +732,30 @@ class MessageTableWidget(QTableWidget):
             start_index: Start index
             end_index: End index
         """
+        # For initial load (empty cache), load synchronously for immediate display
+        if not self._row_data_cache:
+            # First time load - use synchronous loading for initial batch
+            # This ensures user sees data immediately
+            initial_batch = min(100, end_index - start_index)
+            self._load_virtual_window(start_index, start_index + initial_batch)
+
+            # Request rest asynchronously
+            if start_index + initial_batch < end_index:
+                self._data_worker.request_data_range(
+                    start_index + initial_batch,
+                    end_index
+                )
+            return
+
         # Check if we need to preload next chunk
         self._check_preload(start_index, end_index)
 
         # Try to load from cache first
         cached_rows = []
         missing_ranges = []
-        current_start = start_index
 
         for i in range(start_index, end_index):
             if i in self._row_data_cache:
-                if missing_ranges and missing_ranges[-1][1] == i:
-                    # Previous range ended, start new one
-                    pass
                 cached_rows.append(self._row_data_cache[i])
             else:
                 # Mark as missing
@@ -753,8 +764,9 @@ class MessageTableWidget(QTableWidget):
                 else:
                     missing_ranges[-1][1] = i + 1
 
-        # If we have some cached data, display it immediately
-        if cached_rows:
+        # Display cached data if we have enough (>50%)
+        cache_ratio = len(cached_rows) / max(1, end_index - start_index)
+        if cache_ratio > 0.5:
             self._display_cached_rows(start_index, end_index, cached_rows)
 
         # Request missing data from worker
@@ -832,19 +844,25 @@ class MessageTableWidget(QTableWidget):
         Args:
             start_index: Start index
             end_index: End index
-            cached_rows: List of cached TableRowData
+            cached_rows: List of cached TableRowData (may not be complete range)
         """
+        if not cached_rows:
+            return
+
         self.setUpdatesEnabled(False)
         try:
             self.setRowCount(0)
 
-            for row_data in cached_rows:
-                row = self.rowCount()
-                self.insertRow(row)
+            # Display all cached rows in order
+            for i in range(start_index, end_index):
+                if i in self._row_data_cache:
+                    row_data = self._row_data_cache[i]
+                    row = self.rowCount()
+                    self.insertRow(row)
 
-                # Set all items
-                for col, item in enumerate(row_data.row_items):
-                    self.setItem(row, col, item)
+                    # Set all items
+                    for col, item in enumerate(row_data.row_items):
+                        self.setItem(row, col, item)
 
             self._visible_rows_start = start_index
             self._visible_rows_end = end_index
