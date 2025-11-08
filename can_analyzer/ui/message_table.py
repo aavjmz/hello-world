@@ -40,11 +40,19 @@ class MessageTableWidget(QTableWidget):
         # Virtual scrolling state (for large datasets)
         self._use_virtual_scrolling = False
         self._virtual_scroll_threshold = 10000  # Use virtual scrolling for >10k messages
-        self._visible_buffer_size = 30  # Rows above and below visible area
+        self._visible_buffer_size = 100  # Increased buffer: 100 rows above and below (was 30)
         self._visible_rows_start = 0  # First visible row index in data
         self._visible_rows_end = 0    # Last visible row index in data
         self._row_height_estimate = 25  # Estimated row height in pixels
         self._updating_virtual_view = False  # Flag to prevent recursive updates
+
+        # Data cache for prepared rows
+        self._row_data_cache = {}  # Dict[int, TableRowData]
+        self._cache_max_size = 1000  # Maximum cached rows
+
+        # Background worker for data preparation
+        self._data_worker = None
+        self._preload_threshold = 0.7  # Start preloading when 70% through buffer
 
         # Scroll throttle timer for smooth scrolling
         self._scroll_update_timer = QTimer()
@@ -109,6 +117,15 @@ class MessageTableWidget(QTableWidget):
         # Stop any ongoing batch loading
         self._batch_timer.stop()
 
+        # Stop and cleanup old worker
+        if self._data_worker:
+            self._data_worker.stop()
+            self._data_worker.wait(1000)  # Wait up to 1 second
+            self._data_worker = None
+
+        # Clear cache
+        self._row_data_cache.clear()
+
         # Store messages
         self.messages = messages
 
@@ -127,7 +144,7 @@ class MessageTableWidget(QTableWidget):
         if total_to_display >= self._virtual_scroll_threshold:
             # Use virtual scrolling for large datasets
             self._use_virtual_scrolling = True
-            self._init_virtual_scrolling()
+            self._init_virtual_scrolling_with_worker()
         else:
             # Use batch loading for smaller datasets
             self._use_virtual_scrolling = False
@@ -669,3 +686,186 @@ class MessageTableWidget(QTableWidget):
         # Note: We'll use a proxy approach where scrollbar maximum represents data range
         total_messages = len(self._pending_messages)
         self.verticalScrollBar().setMaximum(total_messages - 1)
+
+    def _init_virtual_scrolling_with_worker(self):
+        """
+        Initialize virtual scrolling with background worker thread for better performance
+        """
+        if not self._pending_messages:
+            return
+
+        # Create and start background worker
+        from ui.virtual_scroll_worker import VirtualScrollDataWorker
+
+        self._data_worker = VirtualScrollDataWorker(self)
+        self._data_worker.set_data(
+            self._pending_messages,
+            self.timestamp_formatter,
+            self.signal_decoder
+        )
+        self._data_worker.data_ready.connect(self._on_worker_data_ready)
+        self._data_worker.start()
+
+        # Calculate initial visible window size (larger than before)
+        viewport_height = self.viewport().height()
+        rows_visible = max(50, int(viewport_height / self._row_height_estimate))
+        initial_rows = rows_visible + self._visible_buffer_size * 2  # 50 + 200 = 250 rows
+
+        # Load initial window
+        end_index = min(initial_rows, len(self._pending_messages))
+        self._load_virtual_window_async(0, end_index)
+
+        # Preload next chunk
+        if end_index < len(self._pending_messages):
+            preload_end = min(end_index + self._visible_buffer_size, len(self._pending_messages))
+            self._data_worker.request_data_range(end_index, preload_end)
+
+        # Configure scrollbar
+        total_messages = len(self._pending_messages)
+        self.verticalScrollBar().setMaximum(total_messages - 1)
+
+    def _load_virtual_window_async(self, start_index: int, end_index: int):
+        """
+        Load virtual window using cached data or request from worker
+
+        Args:
+            start_index: Start index
+            end_index: End index
+        """
+        # Check if we need to preload next chunk
+        self._check_preload(start_index, end_index)
+
+        # Try to load from cache first
+        cached_rows = []
+        missing_ranges = []
+        current_start = start_index
+
+        for i in range(start_index, end_index):
+            if i in self._row_data_cache:
+                if missing_ranges and missing_ranges[-1][1] == i:
+                    # Previous range ended, start new one
+                    pass
+                cached_rows.append(self._row_data_cache[i])
+            else:
+                # Mark as missing
+                if not missing_ranges or missing_ranges[-1][1] != i:
+                    missing_ranges.append([i, i + 1])
+                else:
+                    missing_ranges[-1][1] = i + 1
+
+        # If we have some cached data, display it immediately
+        if cached_rows:
+            self._display_cached_rows(start_index, end_index, cached_rows)
+
+        # Request missing data from worker
+        for missing_start, missing_end in missing_ranges:
+            self._data_worker.request_data_range(missing_start, missing_end)
+
+    def _check_preload(self, current_start: int, current_end: int):
+        """
+        Check if we should preload next/previous chunks
+
+        Args:
+            current_start: Current window start
+            current_end: Current window end
+        """
+        if not self._data_worker:
+            return
+
+        total_messages = len(self._pending_messages)
+        window_size = current_end - current_start
+        preload_trigger = int(window_size * self._preload_threshold)
+
+        # Calculate scroll direction and position
+        scroll_pos = (current_start + current_end) / 2
+        prev_scroll_pos = (self._visible_rows_start + self._visible_rows_end) / 2
+
+        # Scrolling down - preload next chunk
+        if scroll_pos > prev_scroll_pos:
+            distance_to_end = current_end - current_start
+            if distance_to_end < preload_trigger:
+                # Near end of current window, preload next
+                preload_start = current_end
+                preload_end = min(preload_start + self._visible_buffer_size, total_messages)
+                if preload_start < total_messages:
+                    self._data_worker.request_data_range(preload_start, preload_end)
+
+        # Scrolling up - preload previous chunk
+        elif scroll_pos < prev_scroll_pos:
+            distance_to_start = current_start
+            if distance_to_start < preload_trigger:
+                # Near start of current window, preload previous
+                preload_end = current_start
+                preload_start = max(0, preload_end - self._visible_buffer_size)
+                if preload_start >= 0:
+                    self._data_worker.request_data_range(preload_start, preload_end)
+
+    def _on_worker_data_ready(self, start_index: int, end_index: int, row_data_list):
+        """
+        Callback when worker has prepared data
+
+        Args:
+            start_index: Start index
+            end_index: End index
+            row_data_list: List of TableRowData objects
+        """
+        # Store in cache
+        for i, row_data in enumerate(row_data_list):
+            cache_index = start_index + i
+            self._row_data_cache[cache_index] = row_data
+
+            # Limit cache size
+            if len(self._row_data_cache) > self._cache_max_size:
+                # Remove oldest entries (simple FIFO)
+                oldest_key = min(self._row_data_cache.keys())
+                del self._row_data_cache[oldest_key]
+
+        # If this data is in current visible window, update display
+        if (start_index >= self._visible_rows_start and start_index < self._visible_rows_end) or \
+           (end_index > self._visible_rows_start and end_index <= self._visible_rows_end):
+            self._refresh_visible_window_from_cache()
+
+    def _display_cached_rows(self, start_index: int, end_index: int, cached_rows):
+        """
+        Display rows from cache
+
+        Args:
+            start_index: Start index
+            end_index: End index
+            cached_rows: List of cached TableRowData
+        """
+        self.setUpdatesEnabled(False)
+        try:
+            self.setRowCount(0)
+
+            for row_data in cached_rows:
+                row = self.rowCount()
+                self.insertRow(row)
+
+                # Set all items
+                for col, item in enumerate(row_data.row_items):
+                    self.setItem(row, col, item)
+
+            self._visible_rows_start = start_index
+            self._visible_rows_end = end_index
+
+        finally:
+            self.setUpdatesEnabled(True)
+
+    def _refresh_visible_window_from_cache(self):
+        """Refresh current visible window from cache"""
+        if not self._use_virtual_scrolling:
+            return
+
+        # Get current window range
+        start = self._visible_rows_start
+        end = self._visible_rows_end
+
+        # Collect cached rows in range
+        cached_rows = []
+        for i in range(start, end):
+            if i in self._row_data_cache:
+                cached_rows.append(self._row_data_cache[i])
+
+        if cached_rows:
+            self._display_cached_rows(start, end, cached_rows)
