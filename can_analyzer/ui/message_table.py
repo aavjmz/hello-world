@@ -364,3 +364,45 @@ class MessageTableWidget(QTableWidget):
         """Clear the current filter"""
         self.message_filter = None
         self.refresh_display()
+
+    def highlight_row(self, row: int):
+        """
+        Highlight a specific row with a distinct background color
+
+        Args:
+            row: Row index to highlight
+        """
+        if 0 <= row < self.rowCount():
+            # Set highlight color (yellow background)
+            highlight_color = QColor(255, 255, 0, 100)  # Semi-transparent yellow
+
+            # Apply to all columns in the row
+            for col in range(self.columnCount()):
+                item = self.item(row, col)
+                if item:
+                    item.setBackground(highlight_color)
+
+            # Scroll to and select the row
+            self.scrollToItem(self.item(row, 0))
+            self.selectRow(row)
+
+    def clear_highlight(self):
+        """Clear all row highlights"""
+        # Reset background color for all cells
+        for row in range(self.rowCount()):
+            for col in range(self.columnCount()):
+                item = self.item(row, col)
+                if item:
+                    # Reset to default (transparent background)
+                    item.setBackground(QColor(255, 255, 255, 0))
+
+    def get_displayed_messages(self) -> List[CANMessage]:
+        """
+        Get the list of currently displayed messages (after filtering)
+
+        Returns:
+            List of CANMessage objects currently shown in table
+        """
+        if self.message_filter:
+            return [msg for msg in self.messages if self.message_filter.matches(msg)]
+        return self.messages

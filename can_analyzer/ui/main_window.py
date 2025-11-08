@@ -13,6 +13,8 @@ from ui.message_table import MessageTableWidget
 from ui.signal_selection_dialog import SignalSelectionDialog
 from ui.filter_dialog import FilterDialog, MessageFilter
 from ui.dbc_manager_dialog import DBCManagerDialog
+from ui.search_dialog import SearchDialog
+from ui.export_dialog import ExportDialog
 from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
@@ -72,6 +74,12 @@ class MainWindow(QMainWindow):
         import_action.triggered.connect(self.import_messages)
         file_menu.addAction(import_action)
 
+        export_action = QAction("导出报文(&E)...", self)
+        export_action.setShortcut("Ctrl+E")
+        export_action.setStatusTip("导出报文到CSV、Excel或JSON格式")
+        export_action.triggered.connect(self.export_messages)
+        file_menu.addAction(export_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("退出(&X)", self)
@@ -105,6 +113,14 @@ class MainWindow(QMainWindow):
         # Tools Menu
         tools_menu = menubar.addMenu("工具(&T)")
 
+        search_action = QAction("搜索报文(&S)...", self)
+        search_action.setShortcut("Ctrl+F")
+        search_action.setStatusTip("搜索CAN报文")
+        search_action.triggered.connect(self.show_search_dialog)
+        tools_menu.addAction(search_action)
+
+        tools_menu.addSeparator()
+
         filter_action = QAction("过滤器(&F)...", self)
         filter_action.setStatusTip("配置报文过滤器")
         filter_action.triggered.connect(self.configure_filter)
@@ -112,6 +128,14 @@ class MainWindow(QMainWindow):
 
         # Help Menu
         help_menu = menubar.addMenu("帮助(&H)")
+
+        manual_action = QAction("用户手册(&M)", self)
+        manual_action.setShortcut("F1")
+        manual_action.setStatusTip("查看用户手册")
+        manual_action.triggered.connect(self.show_user_manual)
+        help_menu.addAction(manual_action)
+
+        help_menu.addSeparator()
 
         about_action = QAction("关于(&A)", self)
         about_action.setStatusTip("关于CAN Analyzer")
@@ -519,30 +543,136 @@ class MainWindow(QMainWindow):
             else:
                 self.statusBar().showMessage("过滤器已清除", 3000)
 
+    def show_search_dialog(self):
+        """Show search dialog"""
+        # Check if messages are loaded
+        if not self.current_messages:
+            QMessageBox.warning(
+                self,
+                "无报文数据",
+                "请先导入CAN报文文件。"
+            )
+            return
+
+        # Get currently displayed messages (considering filter)
+        displayed_messages = self.message_table.get_displayed_messages()
+
+        if not displayed_messages:
+            QMessageBox.warning(
+                self,
+                "无可搜索的报文",
+                "当前没有可搜索的报文。如果已应用过滤器，请检查过滤条件。"
+            )
+            return
+
+        # Create and show search dialog
+        search_dialog = SearchDialog(displayed_messages, self)
+
+        # Connect result signal to highlight row
+        search_dialog.result_found.connect(self.on_search_result_found)
+
+        # Show dialog
+        search_dialog.exec()
+
+    def on_search_result_found(self, row_index: int, message):
+        """
+        Handle search result found
+
+        Args:
+            row_index: Row index in the table
+            message: The found message
+        """
+        # Clear previous highlight
+        self.message_table.clear_highlight()
+
+        # Highlight the found row
+        self.message_table.highlight_row(row_index)
+
+        # Update status bar
+        self.statusBar().showMessage(
+            f"找到匹配项: 第{row_index + 1}行 | ID: 0x{message.can_id:03X}",
+            5000
+        )
+
+    def export_messages(self):
+        """Export messages to file"""
+        # Check if messages are loaded
+        if not self.current_messages:
+            QMessageBox.warning(
+                self,
+                "无报文数据",
+                "请先导入CAN报文文件。"
+            )
+            return
+
+        # Get currently displayed messages (considering filter)
+        filtered_messages = self.message_table.get_displayed_messages()
+
+        # Show export dialog
+        ExportDialog.export_messages(
+            messages=self.current_messages,
+            timestamp_formatter=self.message_table.timestamp_formatter,
+            signal_decoder=self.message_table.signal_decoder,
+            filtered_messages=filtered_messages,
+            parent=self
+        )
+
     def close_view_tab(self, index):
         """Close a view tab"""
         self.view_tabs.removeTab(index)
+
+    def show_user_manual(self):
+        """Show user manual"""
+        import webbrowser
+        import os
+
+        # Get manual path
+        manual_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'docs',
+            'USER_MANUAL.md'
+        )
+
+        if os.path.exists(manual_path):
+            # Try to open in default markdown viewer or browser
+            try:
+                webbrowser.open('file://' + os.path.abspath(manual_path))
+                self.statusBar().showMessage("用户手册已在浏览器中打开", 3000)
+            except Exception as e:
+                QMessageBox.information(
+                    self,
+                    "用户手册",
+                    f"用户手册位置:\n{manual_path}\n\n"
+                    f"请使用Markdown阅读器或文本编辑器打开。"
+                )
+        else:
+            QMessageBox.warning(
+                self,
+                "用户手册",
+                f"未找到用户手册文件。\n\n期望位置:\n{manual_path}"
+            )
 
     def show_about(self):
         """Show about dialog"""
         QMessageBox.about(
             self,
             "关于 CAN Analyzer",
-            "<h2>CAN Analyzer v0.8.0-beta</h2>"
+            "<h2>CAN Analyzer v0.9.0</h2>"
             "<p>CAN总线报文分析工具</p>"
             "<p><b>核心功能：</b></p>"
             "<ul>"
             "<li>✅ 支持ASC、BLF、LOG格式报文解析</li>"
             "<li>✅ DBC文件管理与信号解码</li>"
             "<li>✅ 多信号曲线可视化</li>"
-            "<li>✅ 报文过滤与搜索</li>"
+            "<li>✅ 报文过滤与搜索 (Ctrl+F)</li>"
+            "<li>✅ 数据导出 (CSV/Excel/JSON)</li>"
             "<li>✅ 后台导入，UI流畅响应</li>"
             "</ul>"
-            "<p><b>最新更新：</b></p>"
+            "<p><b>v0.9.0 新功能：</b></p>"
             "<ul>"
-            "<li>🔧 修复多信号显示问题</li>"
-            "<li>🔧 修复中文字体显示</li>"
-            "<li>⚡ 优化大文件加载性能</li>"
+            "<li>🎉 报文搜索功能 (Ctrl+F)</li>"
+            "<li>🎉 数据导出功能 (Ctrl+E)</li>"
+            "<li>📖 完整用户手册 (F1)</li>"
             "</ul>"
             "<p style='margin-top:10px;'>"
             "<b>技术栈：</b> Python 3.11+ | PyQt6 | cantools | PyQtGraph"
