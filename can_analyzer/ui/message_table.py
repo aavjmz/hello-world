@@ -60,6 +60,7 @@ class MessageTableWidget(QTableWidget):
         self._scroll_update_timer.timeout.connect(self._delayed_scroll_update)
         self._scroll_update_pending = False
         self._last_scroll_value = 0
+        self._scroll_throttle_ms = 150  # Increased from 50ms to 150ms for better performance
 
         # Setup table
         self.setup_table()
@@ -274,6 +275,59 @@ class MessageTableWidget(QTableWidget):
             item.setForeground(QColor(0, 100, 150))  # Dark cyan for signals
             # Add tooltip to indicate it's clickable
             item.setToolTip("双击查看详细信号信息")
+        self.setItem(row, 7, item)
+
+    def _add_message_row_fast(self, row: int, index: int, message: CANMessage):
+        """
+        Optimized version of add_message_row for virtual scrolling
+        Assumes row already exists (pre-allocated with setRowCount)
+
+        Args:
+            row: Row index in table
+            index: Message index in original messages list
+            message: CANMessage object
+        """
+        # Column 0: Index
+        item = QTableWidgetItem(str(index + 1))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setData(Qt.ItemDataRole.UserRole, index)
+        self.setItem(row, 0, item)
+
+        # Column 1: Timestamp
+        item = QTableWidgetItem(self.timestamp_formatter.format(message.timestamp))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.setItem(row, 1, item)
+
+        # Column 2: Channel
+        item = QTableWidgetItem(str(message.channel))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setItem(row, 2, item)
+
+        # Column 3: CAN ID
+        item = QTableWidgetItem(f"0x{message.can_id:03X}")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setItem(row, 3, item)
+
+        # Column 4: Direction
+        item = QTableWidgetItem(message.direction)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if message.direction == 'Rx':
+            item.setForeground(QColor(0, 128, 0))
+        else:
+            item.setForeground(QColor(0, 0, 255))
+        self.setItem(row, 4, item)
+
+        # Column 5: DLC
+        item = QTableWidgetItem(str(message.dlc))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setItem(row, 5, item)
+
+        # Column 6: Data
+        item = QTableWidgetItem(' '.join(f'{b:02X}' for b in message.data))
+        self.setItem(row, 6, item)
+
+        # Column 7: Signal values (simplified - skip decoding during fast scrolling)
+        item = QTableWidgetItem("")
         self.setItem(row, 7, item)
 
     def get_selected_message(self) -> Optional[CANMessage]:
@@ -556,7 +610,10 @@ class MessageTableWidget(QTableWidget):
 
     def _on_scroll(self, value):
         """
-        Handle scroll event for virtual scrolling (with throttling)
+        Handle scroll event for virtual scrolling (with aggressive throttling)
+
+        Strategy: Don't update during scrolling, only update after scroll stops
+        This provides the smoothest scrolling experience
 
         Args:
             value: Scroll position value
@@ -567,25 +624,20 @@ class MessageTableWidget(QTableWidget):
         # Store the scroll value
         self._last_scroll_value = value
 
-        # Use throttling to avoid excessive updates during fast scrolling
-        if not self._scroll_update_timer.isActive():
-            # Update immediately for first scroll
-            self._update_virtual_window()
-            # Start timer to throttle subsequent updates
-            self._scroll_update_timer.start(50)  # 50ms throttle (20 FPS)
-        else:
-            # Mark that an update is pending
-            self._scroll_update_pending = True
+        # Mark that an update is needed
+        self._scroll_update_pending = True
+
+        # Restart timer - this delays update until scrolling stops
+        self._scroll_update_timer.stop()
+        self._scroll_update_timer.start(self._scroll_throttle_ms)
 
     def _delayed_scroll_update(self):
         """
-        Delayed scroll update callback (throttled)
+        Delayed scroll update callback - called after scrolling stops
         """
         if self._scroll_update_pending:
             self._scroll_update_pending = False
             self._update_virtual_window()
-            # Restart timer for next throttle period
-            self._scroll_update_timer.start(50)
 
     def _update_virtual_window(self):
         """
@@ -627,8 +679,10 @@ class MessageTableWidget(QTableWidget):
             new_end = min(total_messages, center_index + rows_visible // 2 + self._visible_buffer_size)
 
             # Only update if the range has changed significantly (to avoid too many updates)
-            # Increased threshold from 10 to 20 for smoother scrolling
-            if abs(new_start - self._visible_rows_start) > 20 or abs(new_end - self._visible_rows_end) > 20:
+            # Increased threshold to 80 rows for much smoother scrolling
+            # With 100-row buffer on each side, this gives good tolerance
+            threshold = min(80, self._visible_buffer_size // 2)
+            if abs(new_start - self._visible_rows_start) > threshold or abs(new_end - self._visible_rows_end) > threshold:
                 self._load_virtual_window(new_start, new_end)
 
         finally:
@@ -642,21 +696,30 @@ class MessageTableWidget(QTableWidget):
             start_index: Start index in the message list
             end_index: End index in the message list
         """
-        # Disable updates during batch operation for better performance
+        # Disable updates and sorting during batch operation for maximum performance
         self.setUpdatesEnabled(False)
+        self.setSortingEnabled(False)
+
         try:
             # Clear current table rows
             self.setRowCount(0)
 
+            # Pre-allocate rows for better performance
+            row_count = min(end_index - start_index, len(self._pending_messages) - start_index)
+            self.setRowCount(row_count)
+
             # Load rows in the window
-            for i in range(start_index, end_index):
+            for row_idx, i in enumerate(range(start_index, end_index)):
                 if i >= len(self._pending_messages):
                     break
 
                 message = self._pending_messages[i]
-                # Find original index in self.messages
-                original_index = self.messages.index(message) if message in self.messages else i
-                self.add_message_row(original_index, message)
+                # Use i directly as original index - much faster than list.index()
+                # which would be O(n) for each message
+                original_index = i
+
+                # Inline message row creation for better performance
+                self._add_message_row_fast(row_idx, original_index, message)
 
             # Update visible range
             self._visible_rows_start = start_index
