@@ -37,9 +37,17 @@ class MessageTableWidget(QTableWidget):
         self._batch_timer = QTimer()
         self._batch_timer.timeout.connect(self._process_batch)
 
-        # Virtual scrolling state (for large datasets)
+        # Sliding window mode for large datasets (better than virtual scrolling)
+        self._use_sliding_window = False
+        self._sliding_window_threshold = 10000  # Use sliding window for >10k messages
+        self._window_size = 15000  # Fixed window size: always show 15000 rows
+        self._window_start_index = 0  # Current window start position in all messages
+        self._append_batch_size = 2000  # Append 2000 rows when reaching bottom
+        self._bottom_trigger_rows = 100  # Trigger when within 100 rows of bottom
+        self._is_loading_more = False  # Flag to prevent concurrent loading
+
+        # Legacy virtual scrolling state (kept for compatibility)
         self._use_virtual_scrolling = False
-        self._virtual_scroll_threshold = 10000  # Use virtual scrolling for >10k messages
         self._visible_buffer_size = 100  # Increased buffer: 100 rows above and below (was 30)
         self._visible_rows_start = 0  # First visible row index in data
         self._visible_rows_end = 0    # Last visible row index in data
@@ -60,7 +68,7 @@ class MessageTableWidget(QTableWidget):
         self._scroll_update_timer.timeout.connect(self._delayed_scroll_update)
         self._scroll_update_pending = False
         self._last_scroll_value = 0
-        self._scroll_throttle_ms = 150  # Increased from 50ms to 150ms for better performance
+        self._scroll_throttle_ms = 50  # Reduced for sliding window (no heavy updates)
 
         # Setup table
         self.setup_table()
@@ -139,15 +147,17 @@ class MessageTableWidget(QTableWidget):
         else:
             self._pending_messages = messages.copy()
 
-        # Determine whether to use virtual scrolling based on message count
+        # Determine whether to use sliding window based on message count
         total_to_display = len(self._pending_messages)
 
-        if total_to_display >= self._virtual_scroll_threshold:
-            # Use virtual scrolling for large datasets
-            self._use_virtual_scrolling = True
-            self._init_virtual_scrolling_with_worker()
+        if total_to_display >= self._sliding_window_threshold:
+            # Use sliding window for large datasets (smooth continuous scrolling)
+            self._use_sliding_window = True
+            self._use_virtual_scrolling = False
+            self._init_sliding_window()
         else:
             # Use batch loading for smaller datasets
+            self._use_sliding_window = False
             self._use_virtual_scrolling = False
             self._batch_index = 0
 
@@ -610,14 +620,19 @@ class MessageTableWidget(QTableWidget):
 
     def _on_scroll(self, value):
         """
-        Handle scroll event for virtual scrolling (with aggressive throttling)
+        Handle scroll event
 
-        Strategy: Don't update during scrolling, only update after scroll stops
-        This provides the smoothest scrolling experience
+        For sliding window mode: Only check for bottom reach
+        For legacy virtual scrolling: Use throttling
 
         Args:
             value: Scroll position value
         """
+        if self._use_sliding_window:
+            # Sliding window mode: check if near bottom
+            self._check_bottom_and_load_more()
+            return
+
         if not self._use_virtual_scrolling or self._updating_virtual_view:
             return
 
@@ -749,6 +764,153 @@ class MessageTableWidget(QTableWidget):
         # Note: We'll use a proxy approach where scrollbar maximum represents data range
         total_messages = len(self._pending_messages)
         self.verticalScrollBar().setMaximum(total_messages - 1)
+
+    def _init_sliding_window(self):
+        """
+        Initialize sliding window mode for large datasets
+
+        This mode provides smooth continuous scrolling by:
+        1. Loading a fixed window of rows (e.g., 15000)
+        2. Only appending new data when scrolling reaches bottom
+        3. Removing old data from top to maintain fixed window size
+        """
+        if not self._pending_messages:
+            return
+
+        # Reset window position
+        self._window_start_index = 0
+
+        # Calculate initial window size
+        total_messages = len(self._pending_messages)
+        initial_window_end = min(self._window_size, total_messages)
+
+        # Load initial window
+        self.setUpdatesEnabled(False)
+        self.setSortingEnabled(False)
+
+        try:
+            self.setRowCount(0)
+            row_count = initial_window_end - self._window_start_index
+            self.setRowCount(row_count)
+
+            # Load rows in the window
+            for row_idx in range(row_count):
+                message_idx = self._window_start_index + row_idx
+                message = self._pending_messages[message_idx]
+                self._add_message_row_fast(row_idx, message_idx, message)
+
+            # Update visible range
+            self._visible_rows_start = self._window_start_index
+            self._visible_rows_end = initial_window_end
+
+        finally:
+            self.setUpdatesEnabled(True)
+
+        print(f"[Sliding Window] Initialized: loaded {row_count} rows (window {self._window_start_index}-{initial_window_end} of {total_messages} total)")
+
+    def _check_bottom_and_load_more(self):
+        """
+        Check if scrolled near bottom and load more data if needed
+        Only triggers when reaching bottom, ensuring smooth continuous scrolling
+        """
+        if self._is_loading_more:
+            return
+
+        # Get current scroll position
+        current_row = self.rowCount()
+        if current_row == 0:
+            return
+
+        # Calculate how close we are to bottom
+        scrollbar = self.verticalScrollBar()
+        scroll_value = scrollbar.value()
+        scroll_max = scrollbar.maximum()
+
+        # Calculate current visible bottom row
+        viewport_height = self.viewport().height()
+        rows_visible = max(30, int(viewport_height / self._row_height_estimate))
+
+        # Check if we're within trigger threshold of the bottom
+        # Using scrollbar position to detect bottom
+        if scroll_max > 0:
+            scroll_percentage = scroll_value / scroll_max
+            # If scrolled more than 95%, we're at bottom
+            if scroll_percentage >= 0.95:
+                self._slide_window_forward()
+        else:
+            # Fallback: check row count directly
+            visible_bottom = int((scroll_value / self._row_height_estimate) + rows_visible)
+            rows_from_bottom = current_row - visible_bottom
+
+            if rows_from_bottom <= self._bottom_trigger_rows:
+                self._slide_window_forward()
+
+    def _slide_window_forward(self):
+        """
+        Slide the window forward: append new data at bottom, remove old data from top
+        This maintains a fixed window size while allowing continuous scrolling
+        """
+        if self._is_loading_more:
+            return
+
+        total_messages = len(self._pending_messages)
+        current_window_end = self._window_start_index + self.rowCount()
+
+        # Check if we have more data to load
+        if current_window_end >= total_messages:
+            print(f"[Sliding Window] Already at end of data ({current_window_end}/{total_messages})")
+            return
+
+        # Mark as loading
+        self._is_loading_more = True
+
+        try:
+            # Calculate how many rows to append
+            rows_to_append = min(self._append_batch_size, total_messages - current_window_end)
+
+            # Save current scroll position (relative to current content)
+            scrollbar = self.verticalScrollBar()
+            old_scroll_value = scrollbar.value()
+
+            self.setUpdatesEnabled(False)
+            self.setSortingEnabled(False)
+
+            try:
+                # Calculate new window boundaries
+                new_window_start = self._window_start_index + rows_to_append
+                new_window_end = current_window_end + rows_to_append
+
+                # Remove rows from top
+                for _ in range(rows_to_append):
+                    self.removeRow(0)
+
+                # Append new rows at bottom
+                current_row_count = self.rowCount()
+                self.setRowCount(current_row_count + rows_to_append)
+
+                for i in range(rows_to_append):
+                    message_idx = current_window_end + i
+                    row_idx = current_row_count + i
+                    message = self._pending_messages[message_idx]
+                    self._add_message_row_fast(row_idx, message_idx, message)
+
+                # Update window position
+                self._window_start_index = new_window_start
+                self._visible_rows_start = new_window_start
+                self._visible_rows_end = new_window_end
+
+                print(f"[Sliding Window] Slid forward: removed {rows_to_append} from top, added {rows_to_append} at bottom (window now {new_window_start}-{new_window_end} of {total_messages})")
+
+            finally:
+                self.setUpdatesEnabled(True)
+
+                # Restore scroll position to prevent jump
+                # Since we removed rows from top, we need to adjust scroll value
+                new_scroll_value = max(0, old_scroll_value - (rows_to_append * self._row_height_estimate))
+                scrollbar.setValue(int(new_scroll_value))
+
+        finally:
+            self._is_loading_more = False
 
     def _init_virtual_scrolling_with_worker(self):
         """
