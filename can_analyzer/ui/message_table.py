@@ -806,12 +806,15 @@ class MessageTableWidget(QTableWidget):
         finally:
             self.setUpdatesEnabled(True)
 
+        # Initial scroll position at top to show first messages
+        # (scroll position will be adjusted to middle after window sliding)
+
         print(f"[Sliding Window] Initialized: loaded {row_count} rows (window {self._window_start_index}-{initial_window_end} of {total_messages} total)")
 
     def _check_bottom_and_load_more(self):
         """
-        Check if scrolled near bottom and load more data if needed
-        Only triggers when reaching bottom, ensuring smooth continuous scrolling
+        Check if scrolled near top or bottom and load more data if needed
+        Supports bidirectional scrolling for continuous data viewing
         """
         if self._is_loading_more:
             return
@@ -821,29 +824,22 @@ class MessageTableWidget(QTableWidget):
         if current_row == 0:
             return
 
-        # Calculate how close we are to bottom
+        # Calculate scroll position
         scrollbar = self.verticalScrollBar()
         scroll_value = scrollbar.value()
         scroll_max = scrollbar.maximum()
 
-        # Calculate current visible bottom row
-        viewport_height = self.viewport().height()
-        rows_visible = max(30, int(viewport_height / self._row_height_estimate))
+        if scroll_max <= 0:
+            return
 
-        # Check if we're within trigger threshold of the bottom
-        # Using scrollbar position to detect bottom
-        if scroll_max > 0:
-            scroll_percentage = scroll_value / scroll_max
-            # If scrolled more than 95%, we're at bottom
-            if scroll_percentage >= 0.95:
-                self._slide_window_forward()
-        else:
-            # Fallback: check row count directly
-            visible_bottom = int((scroll_value / self._row_height_estimate) + rows_visible)
-            rows_from_bottom = current_row - visible_bottom
+        scroll_percentage = scroll_value / scroll_max
 
-            if rows_from_bottom <= self._bottom_trigger_rows:
-                self._slide_window_forward()
+        # Check if near top (for backward scrolling)
+        if scroll_percentage <= 0.05:  # Top 5%
+            self._slide_window_backward()
+        # Check if near bottom (for forward scrolling)
+        elif scroll_percentage >= 0.95:  # Bottom 5%
+            self._slide_window_forward()
 
     def _slide_window_forward(self):
         """
@@ -867,10 +863,6 @@ class MessageTableWidget(QTableWidget):
         try:
             # Calculate how many rows to append
             rows_to_append = min(self._append_batch_size, total_messages - current_window_end)
-
-            # Save current scroll position (relative to current content)
-            scrollbar = self.verticalScrollBar()
-            old_scroll_value = scrollbar.value()
 
             self.setUpdatesEnabled(False)
             self.setSortingEnabled(False)
@@ -904,10 +896,75 @@ class MessageTableWidget(QTableWidget):
             finally:
                 self.setUpdatesEnabled(True)
 
-                # Restore scroll position to prevent jump
-                # Since we removed rows from top, we need to adjust scroll value
-                new_scroll_value = max(0, old_scroll_value - (rows_to_append * self._row_height_estimate))
-                scrollbar.setValue(int(new_scroll_value))
+                # Keep scroll position in the middle to allow both up and down scrolling
+                scrollbar = self.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum() // 2)
+
+        finally:
+            self._is_loading_more = False
+
+    def _slide_window_backward(self):
+        """
+        Slide the window backward: prepend old data at top, remove recent data from bottom
+        This allows scrolling back to view earlier messages
+        """
+        if self._is_loading_more:
+            return
+
+        # Check if we have earlier data to load
+        if self._window_start_index <= 0:
+            print(f"[Sliding Window] Already at start of data (window starts at 0)")
+            return
+
+        # Mark as loading
+        self._is_loading_more = True
+
+        try:
+            # Calculate how many rows to prepend
+            rows_to_prepend = min(self._append_batch_size, self._window_start_index)
+
+            self.setUpdatesEnabled(False)
+            self.setSortingEnabled(False)
+
+            try:
+                total_messages = len(self._pending_messages)
+                current_window_end = self._window_start_index + self.rowCount()
+
+                # Calculate new window boundaries
+                new_window_start = self._window_start_index - rows_to_prepend
+                new_window_end = current_window_end - rows_to_prepend
+
+                # Remove rows from bottom
+                current_row_count = self.rowCount()
+                for _ in range(rows_to_prepend):
+                    self.removeRow(current_row_count - 1)
+                    current_row_count -= 1
+
+                # Prepend new rows at top
+                # We need to insert rows at the beginning
+                for i in range(rows_to_prepend):
+                    self.insertRow(0)
+
+                # Fill the prepended rows with data
+                for i in range(rows_to_prepend):
+                    message_idx = new_window_start + i
+                    row_idx = i
+                    message = self._pending_messages[message_idx]
+                    self._add_message_row_fast(row_idx, message_idx, message)
+
+                # Update window position
+                self._window_start_index = new_window_start
+                self._visible_rows_start = new_window_start
+                self._visible_rows_end = new_window_end
+
+                print(f"[Sliding Window] Slid backward: removed {rows_to_prepend} from bottom, added {rows_to_prepend} at top (window now {new_window_start}-{new_window_end} of {total_messages})")
+
+            finally:
+                self.setUpdatesEnabled(True)
+
+                # Keep scroll position in the middle to allow both up and down scrolling
+                scrollbar = self.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum() // 2)
 
         finally:
             self._is_loading_more = False
