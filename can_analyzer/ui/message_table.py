@@ -864,6 +864,21 @@ class MessageTableWidget(QTableWidget):
             # Calculate how many rows to append
             rows_to_append = min(self._append_batch_size, total_messages - current_window_end)
 
+            # Calculate current visible row to maintain visual continuity
+            scrollbar = self.verticalScrollBar()
+            old_scroll_value = scrollbar.value()
+            old_scroll_max = scrollbar.maximum()
+
+            # Estimate which row user is currently viewing
+            if old_scroll_max > 0:
+                scroll_percentage = old_scroll_value / old_scroll_max
+                current_viewing_row = int(scroll_percentage * self.rowCount())
+            else:
+                current_viewing_row = 0
+
+            # Calculate the message index user is viewing
+            viewing_message_index = self._window_start_index + current_viewing_row
+
             self.setUpdatesEnabled(False)
             self.setSortingEnabled(False)
 
@@ -896,9 +911,25 @@ class MessageTableWidget(QTableWidget):
             finally:
                 self.setUpdatesEnabled(True)
 
-                # Keep scroll position in the middle to allow both up and down scrolling
-                scrollbar = self.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum() // 2)
+                # Maintain visual continuity: keep user viewing the same message
+                new_viewing_row = viewing_message_index - new_window_start
+
+                # Ensure the new position is valid and allows further scrolling
+                new_row_count = self.rowCount()
+                if new_viewing_row < 0:
+                    # User was viewing messages that got removed, position near top
+                    new_viewing_row = new_row_count // 4  # 25% position
+                elif new_viewing_row >= new_row_count:
+                    # Should not happen, but handle it
+                    new_viewing_row = new_row_count * 3 // 4  # 75% position
+
+                # Set scroll position to maintain visual continuity
+                new_scroll_max = scrollbar.maximum()
+                if new_scroll_max > 0 and new_row_count > 0:
+                    target_percentage = new_viewing_row / new_row_count
+                    target_scroll_value = int(target_percentage * new_scroll_max)
+                    scrollbar.setValue(target_scroll_value)
+                    print(f"[Sliding Window] Maintaining scroll position: message {viewing_message_index} at row {new_viewing_row} ({target_percentage*100:.1f}%)")
 
         finally:
             self._is_loading_more = False
@@ -922,6 +953,21 @@ class MessageTableWidget(QTableWidget):
         try:
             # Calculate how many rows to prepend
             rows_to_prepend = min(self._append_batch_size, self._window_start_index)
+
+            # Calculate current visible row to maintain visual continuity
+            scrollbar = self.verticalScrollBar()
+            old_scroll_value = scrollbar.value()
+            old_scroll_max = scrollbar.maximum()
+
+            # Estimate which row user is currently viewing
+            if old_scroll_max > 0:
+                scroll_percentage = old_scroll_value / old_scroll_max
+                current_viewing_row = int(scroll_percentage * self.rowCount())
+            else:
+                current_viewing_row = 0
+
+            # Calculate the message index user is viewing
+            viewing_message_index = self._window_start_index + current_viewing_row
 
             self.setUpdatesEnabled(False)
             self.setSortingEnabled(False)
@@ -962,9 +1008,26 @@ class MessageTableWidget(QTableWidget):
             finally:
                 self.setUpdatesEnabled(True)
 
-                # Keep scroll position in the middle to allow both up and down scrolling
-                scrollbar = self.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum() // 2)
+                # Maintain visual continuity: keep user viewing the same message
+                # Since we prepended rows, the viewing position shifts down
+                new_viewing_row = viewing_message_index - new_window_start
+
+                # Ensure the new position is valid
+                new_row_count = self.rowCount()
+                if new_viewing_row < 0:
+                    # Should not happen, but handle it
+                    new_viewing_row = new_row_count // 4  # 25% position
+                elif new_viewing_row >= new_row_count:
+                    # User was viewing messages that got removed, position near bottom
+                    new_viewing_row = new_row_count * 3 // 4  # 75% position
+
+                # Set scroll position to maintain visual continuity
+                new_scroll_max = scrollbar.maximum()
+                if new_scroll_max > 0 and new_row_count > 0:
+                    target_percentage = new_viewing_row / new_row_count
+                    target_scroll_value = int(target_percentage * new_scroll_max)
+                    scrollbar.setValue(target_scroll_value)
+                    print(f"[Sliding Window] Maintaining scroll position: message {viewing_message_index} at row {new_viewing_row} ({target_percentage*100:.1f}%)")
 
         finally:
             self._is_loading_more = False
