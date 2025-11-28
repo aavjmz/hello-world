@@ -336,8 +336,21 @@ class MessageTableWidget(QTableWidget):
         item = QTableWidgetItem(' '.join(f'{b:02X}' for b in message.data))
         self.setItem(row, 6, item)
 
-        # Column 7: Signal values (simplified - skip decoding during fast scrolling)
-        item = QTableWidgetItem("")
+        # Column 7: Signal values
+        signal_str = ""
+        if self.signal_decoder:
+            decoded = self.signal_decoder.decode_message(message)
+            if decoded:
+                signal_str = self.signal_decoder.get_signal_summary(decoded, max_signals=2)
+                # Add expand indicator if there are signals
+                if decoded.get_signal_count() > 0:
+                    signal_str += " [...]"
+
+        item = QTableWidgetItem(signal_str)
+        if signal_str:
+            item.setForeground(QColor(0, 100, 150))  # Dark cyan for signals
+            # Add tooltip to indicate it's clickable
+            item.setToolTip("双击查看详细信号信息")
         self.setItem(row, 7, item)
 
     def get_selected_message(self) -> Optional[CANMessage]:
