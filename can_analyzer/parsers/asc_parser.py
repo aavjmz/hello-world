@@ -51,11 +51,12 @@ class ASCParser:
     # Pattern 1: Standard format with explicit direction (Rx/Tx) and data frame marker (d)
     # Example: 0.010000 1  123  Rx   d 8  00 01 02 03 04 05 06 07
     # Also matches extended IDs: 0.010000 1  123X  Rx   d 8  00 01 02 03 04 05 06 07
+    #                         or: 0.010000 1  123x  Rx   d 8  00 01 02 03 04 05 06 07
     _PATTERN_WITH_DIR = re.compile(
         r'^\s*'
         r'(?P<timestamp>[\d.]+)\s+'            # timestamp
         r'(?P<channel>\d+)\s+'                 # channel number
-        r'(?P<can_id>[0-9A-Fa-f]+)X?\s+'      # CAN ID (hex), optional X for extended frame
+        r'(?P<can_id>[0-9A-Fa-f]+)[Xx]?\s+'   # CAN ID (hex), optional X/x for extended frame
         r'(?P<direction>Rx|Tx)\s+'             # direction
         r'd\s+'                                 # 'd' = data frame
         r'(?P<dlc>\d+)'                        # DLC
@@ -64,11 +65,12 @@ class ASCParser:
 
     # Pattern 2: Format without explicit direction (only data frame marker)
     # Example: 0.010000 1  123  d 8  00 01 02 03 04 05 06 07
+    #       or: 0.010000 1  123x  d 8  00 01 02 03 04 05 06 07
     _PATTERN_NO_DIR = re.compile(
         r'^\s*'
         r'(?P<timestamp>[\d.]+)\s+'            # timestamp
         r'(?P<channel>\d+)\s+'                 # channel number
-        r'(?P<can_id>[0-9A-Fa-f]+)X?\s+'      # CAN ID (hex), optional X for extended frame
+        r'(?P<can_id>[0-9A-Fa-f]+)[Xx]?\s+'   # CAN ID (hex), optional X/x for extended frame
         r'd\s+'                                 # 'd' = data frame (no direction field)
         r'(?P<dlc>\d+)'                        # DLC
         r'(?:\s+(?P<data>[0-9A-Fa-f\s]*))?'   # data bytes (optional)
