@@ -102,6 +102,8 @@ def test_selection_dialog_structure():
         'def select_all',
         'def clear_selection',
         'def get_selected_signals',
+        'def apply_filter',
+        'def _fuzzy_match',
         '@staticmethod',
         'def select_signals'
     ]
@@ -120,12 +122,14 @@ def test_selection_dialog_structure():
     # Check for UI elements
     ui_elements = [
         'QListWidget',
+        'QLineEdit',
         'QPushButton',
         'MultiSelection',
         '全选',
         '清空',
         '确定',
-        '取消'
+        '取消',
+        '搜索信号名或消息ID'
     ]
 
     missing_elements = []
