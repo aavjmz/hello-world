@@ -5,7 +5,7 @@ Signal Selection Dialog for choosing signals to plot
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QListWidgetItem, QLabel, QGroupBox,
-    QAbstractItemView
+    QAbstractItemView, QLineEdit
 )
 from PyQt6.QtCore import Qt
 from typing import List, Dict, Set
@@ -20,6 +20,7 @@ class SignalSelectionDialog(QDialog):
         self.dbc_manager = dbc_manager
         self.can_ids = can_ids
         self.selected_signals: List[Dict] = []
+        self._all_items: List[tuple] = []  # (text, data_dict)
 
         self.setWindowTitle("选择信号")
         self.setMinimumSize(600, 400)
@@ -38,6 +39,12 @@ class SignalSelectionDialog(QDialog):
         # Signal list
         list_group = QGroupBox("可用信号")
         list_layout = QVBoxLayout(list_group)
+
+        # Search bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("搜索信号名或消息ID（支持模糊搜索）")
+        self.search_input.textChanged.connect(self.apply_filter)
+        list_layout.addWidget(self.search_input)
 
         self.signal_list = QListWidget()
         self.signal_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -79,6 +86,7 @@ class SignalSelectionDialog(QDialog):
     def load_signals(self):
         """Load available signals from DBC"""
         self.signal_list.clear()
+        self._all_items = []
 
         # Get active DBC
         db = self.dbc_manager.get_active()
@@ -87,7 +95,6 @@ class SignalSelectionDialog(QDialog):
             return
 
         # Collect all signals from the CAN IDs
-        signal_count = 0
         for can_id in self.can_ids:
             msg_def = db.get_message_by_id(can_id)
             if not msg_def:
@@ -95,26 +102,55 @@ class SignalSelectionDialog(QDialog):
 
             # Add signals from this message
             for signal in msg_def.signals:
-                item = QListWidgetItem()
-
                 # Format: "MessageName.SignalName (unit) [ID: 0x123]"
                 text = f"{msg_def.name}.{signal.name}"
                 if signal.unit:
                     text += f" ({signal.unit})"
                 text += f" [ID: 0x{can_id:03X}]"
 
-                item.setText(text)
-
-                # Store signal info as user data
-                item.setData(Qt.ItemDataRole.UserRole, {
+                data = {
                     'can_id': can_id,
                     'message_name': msg_def.name,
                     'signal_name': signal.name,
                     'unit': signal.unit
-                })
+                }
+                self._all_items.append((text, data))
 
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, data)
                 self.signal_list.addItem(item)
-                signal_count += 1
+
+        self.update_stats()
+
+    def _fuzzy_match(self, pattern: str, text: str) -> bool:
+        """字符序列匹配：pattern 的所有字符按顺序出现在 text 中即命中"""
+        it = iter(text)
+        return all(c in it for c in pattern)
+
+    def apply_filter(self, text: str):
+        """Filter signal list based on search text"""
+        query = text.strip().lower()
+
+        self.signal_list.clear()
+
+        for item_text, data in self._all_items:
+            if not query:
+                match = True
+            else:
+                can_id = data['can_id']
+                # Match against signal/message name (fuzzy)
+                name_text = f"{data['message_name']}.{data['signal_name']}".lower()
+                name_match = self._fuzzy_match(query, name_text)
+                # Match against message ID (hex and decimal substring)
+                id_hex = f"0x{can_id:03x}"
+                id_dec = str(can_id)
+                id_match = query in id_hex or query in id_dec
+                match = name_match or id_match
+
+            if match:
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.ItemDataRole.UserRole, data)
+                self.signal_list.addItem(item)
 
         self.update_stats()
 
