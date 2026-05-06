@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QLineEdit
 )
 from PyQt6.QtCore import Qt
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Tuple
 from utils.dbc_manager import DBCManager
 
 
@@ -21,6 +21,8 @@ class SignalSelectionDialog(QDialog):
         self.can_ids = can_ids
         self.selected_signals: List[Dict] = []
         self._all_items: List[tuple] = []  # (text, data_dict)
+        self._selected_keys: Set[Tuple[int, str]] = set()
+        self._syncing: bool = False
 
         self.setWindowTitle("选择信号")
         self.setMinimumSize(600, 400)
@@ -131,45 +133,70 @@ class SignalSelectionDialog(QDialog):
         """Filter signal list based on search text"""
         query = text.strip().lower()
 
-        self.signal_list.clear()
+        self._syncing = True
+        try:
+            self.signal_list.clear()
 
-        for item_text, data in self._all_items:
-            if not query:
-                match = True
-            else:
-                can_id = data['can_id']
-                # Match against signal/message name (fuzzy)
-                name_text = f"{data['message_name']}.{data['signal_name']}".lower()
-                name_match = self._fuzzy_match(query, name_text)
-                # Match against message ID (hex and decimal substring)
-                id_hex = f"0x{can_id:03x}"
-                id_dec = str(can_id)
-                id_match = query in id_hex or query in id_dec
-                match = name_match or id_match
+            for item_text, data in self._all_items:
+                if not query:
+                    match = True
+                else:
+                    can_id = data['can_id']
+                    # Match against signal/message name (fuzzy)
+                    name_text = f"{data['message_name']}.{data['signal_name']}".lower()
+                    name_match = self._fuzzy_match(query, name_text)
+                    # Match against message ID (hex and decimal substring)
+                    id_hex = f"0x{can_id:03x}"
+                    id_dec = str(can_id)
+                    id_match = query in id_hex or query in id_dec
+                    match = name_match or id_match
 
-            if match:
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.ItemDataRole.UserRole, data)
-                self.signal_list.addItem(item)
+                if match:
+                    item = QListWidgetItem(item_text)
+                    item.setData(Qt.ItemDataRole.UserRole, data)
+                    self.signal_list.addItem(item)
+                    if (data['can_id'], data['signal_name']) in self._selected_keys:
+                        item.setSelected(True)
+        finally:
+            self._syncing = False
 
         self.update_stats()
 
     def select_all(self):
         """Select all signals"""
         self.signal_list.selectAll()
+        for i in range(self.signal_list.count()):
+            data = self.signal_list.item(i).data(Qt.ItemDataRole.UserRole)
+            if data:
+                self._selected_keys.add((data['can_id'], data['signal_name']))
+        self.update_stats()
 
     def clear_selection(self):
         """Clear all selections"""
         self.signal_list.clearSelection()
+        self._selected_keys.clear()
+        self.update_stats()
 
     def on_selection_changed(self):
         """Handle selection change"""
+        if self._syncing:
+            return
+        for i in range(self.signal_list.count()):
+            item = self.signal_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if not data:
+                continue
+            key = (data['can_id'], data['signal_name'])
+            if item.isSelected():
+                self._selected_keys.add(key)
+            else:
+                self._selected_keys.discard(key)
         self.update_stats()
 
     def update_stats(self):
         """Update statistics label"""
         total = self.signal_list.count()
-        selected = len(self.signal_list.selectedItems())
+        selected = len(self._selected_keys)
 
         self.stats_label.setText(f"总共 {total} 个信号，已选择 {selected} 个")
 
@@ -184,10 +211,9 @@ class SignalSelectionDialog(QDialog):
             List of dicts with signal info
         """
         selected = []
-        for item in self.signal_list.selectedItems():
-            signal_info = item.data(Qt.ItemDataRole.UserRole)
-            if signal_info:
-                selected.append(signal_info)
+        for _text, data in self._all_items:
+            if (data['can_id'], data['signal_name']) in self._selected_keys:
+                selected.append(data)
         return selected
 
     def accept(self):
