@@ -4,6 +4,10 @@ CAN Analyzer - Main Entry Point
 """
 
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
