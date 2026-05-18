@@ -79,6 +79,7 @@ class ASCParser:
     def __init__(self):
         self.messages: List[CANMessage] = []
         self.start_date: Optional[str] = None
+        self.start_datetime: Optional[datetime] = None
         self.base_format: str = 'hex'
         self.timestamp_format: str = 'absolute'
 
@@ -131,6 +132,7 @@ class ASCParser:
         import can
 
         self.messages.clear()
+        self._read_file_header(file_path)
 
         try:
             with can.ASCReader(file_path) as reader:
@@ -217,11 +219,46 @@ class ASCParser:
 
         return self.messages
 
+    def _read_file_header(self, file_path: str):
+        """Read and parse only the header lines of an ASC file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith(';'):
+                        continue
+                    if line.startswith('date'):
+                        self._parse_date(line)
+                    elif line.startswith('base'):
+                        self._parse_base(line)
+                    elif line.startswith('timestamps'):
+                        self._parse_timestamps(line)
+                    elif line.startswith('Begin') or line.startswith('End'):
+                        break
+                    elif re.match(r'^\s*[\d.]+\s', line):
+                        break  # First message line, stop
+        except Exception:
+            pass  # Header parsing failure is non-fatal
+
     def _parse_date(self, line: str):
         """Parse date header line."""
         parts = line.split()
         if len(parts) >= 2:
             self.start_date = ' '.join(parts[1:])
+            self.start_datetime = self._parse_date_string(self.start_date)
+
+    def _parse_date_string(self, date_str: str) -> Optional[datetime]:
+        """Parse an ASC date string into a datetime object."""
+        formats = [
+            "%a %b %d %H:%M:%S.%f %Y",
+            "%a %b %d %H:%M:%S %Y",
+        ]
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        return None
 
     def _parse_base(self, line: str):
         """Parse base format header line."""

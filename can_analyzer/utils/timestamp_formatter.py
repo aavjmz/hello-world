@@ -83,14 +83,14 @@ class TimestampFormatter:
         return f"{us:.0f}us"
 
     def _format_time_of_day(self, timestamp: float) -> str:
-        """Format as time of day (HH:MM:SS.mmm)"""
+        """Format as absolute time (HH:MM:SS.mmm, or YYYY-MM-DD HH:MM:SS.mmm for multi-day spans)"""
         if self.base_datetime is None:
-            # If no base datetime, just format as duration
             return self._format_duration(timestamp)
 
-        # Calculate absolute time
         absolute_time = self.base_datetime + timedelta(seconds=timestamp)
-        return absolute_time.strftime("%H:%M:%S.%f")[:-3]  # Remove last 3 digits
+        if absolute_time.date() != self.base_datetime.date():
+            return absolute_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        return absolute_time.strftime("%H:%M:%S.%f")[:-3]
 
     def _format_relative(self, timestamp: float) -> str:
         """Format as relative time from start"""
