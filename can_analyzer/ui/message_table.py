@@ -113,8 +113,11 @@ class MessageTableWidget(QTableWidget):
     def set_timestamp_format(self, format_type: TimestampFormat):
         """Set timestamp display format"""
         self.timestamp_formatter.set_format(format_type)
-        # Refresh display
         self.refresh_display()
+
+    def set_base_datetime(self, base_datetime):
+        """Set the base datetime for absolute time conversion"""
+        self.timestamp_formatter.set_base_datetime(base_datetime)
 
     def set_messages(self, messages: List[CANMessage]):
         """
@@ -449,10 +452,16 @@ class MessageTableWidget(QTableWidget):
             (TimestampFormat.SECONDS, "秒"),
             (TimestampFormat.MILLISECONDS, "毫秒"),
             (TimestampFormat.MICROSECONDS, "微秒"),
+            (TimestampFormat.TIME_OF_DAY, "实际时间"),
         ]
 
         for fmt, name in formats:
             action = QAction(name, self)
+            if fmt == TimestampFormat.TIME_OF_DAY:
+                has_base = self.timestamp_formatter.base_datetime is not None
+                action.setEnabled(has_base)
+                if not has_base:
+                    action.setToolTip("需要文件包含日期信息才能显示实际时间")
             action.triggered.connect(lambda checked, f=fmt: self.set_timestamp_format(f))
             ts_menu.addAction(action)
 

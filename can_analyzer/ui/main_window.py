@@ -273,6 +273,10 @@ class MainWindow(QMainWindow):
         # Store messages
         self.current_messages = messages
 
+        # Pass start datetime to formatter for absolute time conversion
+        start_datetime = stats.get('start_datetime') if stats else None
+        self.message_table.set_base_datetime(start_datetime)
+
         # Display messages in table
         self.message_table.set_messages(messages)
 

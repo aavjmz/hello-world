@@ -57,6 +57,8 @@ class FileImportWorker(QThread):
             stats = {}
             if parser:
                 stats = parser.get_statistics()
+                if hasattr(parser, 'start_datetime') and parser.start_datetime is not None:
+                    stats['start_datetime'] = parser.start_datetime
 
             # Stage 4: Complete (95-100%)
             self.progress_updated.emit("导入完成", 100)
