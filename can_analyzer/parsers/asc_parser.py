@@ -252,6 +252,8 @@ class ASCParser:
         formats = [
             "%a %b %d %H:%M:%S.%f %Y",
             "%a %b %d %H:%M:%S %Y",
+            "%a %b %d %I:%M:%S %p %Y",    # 12-hour AM/PM (e.g. Thu May 14 11:18:07 AM 2026)
+            "%a %b %d %I:%M:%S.%f %p %Y",
         ]
         for fmt in formats:
             try:
