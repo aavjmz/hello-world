@@ -8,6 +8,7 @@ import os
 from typing import List, Optional
 from parsers.asc_parser import ASCParser, CANMessage
 from parsers.blf_parser import BLFParser
+from parsers.vehicle_log_parser import VehicleLogParser
 
 
 class MessageParser:
@@ -16,7 +17,8 @@ class MessageParser:
     SUPPORTED_FORMATS = {
         '.asc': 'ASC',
         '.blf': 'BLF',
-        '.log': 'ASC'  # Some ASC files use .log extension
+        '.log': 'ASC',   # Some ASC files use .log extension
+        '.txt': 'VEHICLE_LOG',  # Vehicle recorder CAN log (*.can_vecihle.txt)
     }
 
     def __init__(self):
@@ -56,29 +58,40 @@ class MessageParser:
                     "Install it with: pip install python-can"
                 )
             return self.current_parser.parse_file(file_path)
+        elif self.file_format == 'VEHICLE_LOG':
+            self.current_parser = VehicleLogParser()
+            return self.current_parser.parse_file(file_path)
         else:
             raise ValueError(f"Unsupported file format: {self.file_format}")
 
     def _detect_format(self, file_path: str) -> str:
         """
-        Detect file format from extension
+        Detect file format from extension, with content sniffing for .txt files.
 
         Args:
             file_path: Path to the file
 
         Returns:
-            Format string ('ASC' or 'BLF')
+            Format string ('ASC', 'BLF', or 'VEHICLE_LOG')
         """
         _, ext = os.path.splitext(file_path)
         ext = ext.lower()
 
+        if ext == '.txt':
+            if VehicleLogParser.is_vehicle_log(file_path):
+                return 'VEHICLE_LOG'
+            raise ValueError(
+                "Unrecognized .txt file. "
+                "Expected a vehicle log with 'pts' header (*.can_vecihle.txt)."
+            )
+
         if ext in self.SUPPORTED_FORMATS:
             return self.SUPPORTED_FORMATS[ext]
-        else:
-            raise ValueError(
-                f"Unknown file extension: {ext}. "
-                f"Supported extensions: {list(self.SUPPORTED_FORMATS.keys())}"
-            )
+
+        raise ValueError(
+            f"Unknown file extension: {ext}. "
+            f"Supported extensions: {list(self.SUPPORTED_FORMATS.keys())}"
+        )
 
     def get_parser(self):
         """Get the current parser instance"""
@@ -97,4 +110,7 @@ class MessageParser:
     def is_format_supported(file_path: str) -> bool:
         """Check if file format is supported"""
         _, ext = os.path.splitext(file_path)
-        return ext.lower() in MessageParser.SUPPORTED_FORMATS
+        ext = ext.lower()
+        if ext == '.txt':
+            return VehicleLogParser.is_vehicle_log(file_path)
+        return ext in MessageParser.SUPPORTED_FORMATS

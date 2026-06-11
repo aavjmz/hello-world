@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
             self,
             "导入CAN报文文件",
             "",
-            "CAN文件 (*.asc *.blf *.log);;ASC文件 (*.asc);;BLF文件 (*.blf);;所有文件 (*.*)"
+            "CAN文件 (*.asc *.blf *.log *.txt);;ASC文件 (*.asc);;BLF文件 (*.blf);;车辆日志 (*.txt);;所有文件 (*.*)"
         )
 
         if not file_path:
