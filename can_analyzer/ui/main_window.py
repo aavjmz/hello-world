@@ -15,6 +15,7 @@ from ui.filter_dialog import FilterDialog, MessageFilter
 from ui.dbc_manager_dialog import DBCManagerDialog
 from ui.search_dialog import SearchDialog
 from ui.export_dialog import ExportDialog
+from ui.cycle_analysis_dialog import CycleAnalysisDialog
 from views.signal_plot_widget import SignalPlotWidget
 from parsers.message_parser import MessageParser
 from utils.dbc_manager import DBCManager
@@ -177,6 +178,14 @@ class MainWindow(QMainWindow):
         view_btn.setStatusTip("创建新的曲线视图")
         view_btn.triggered.connect(self.create_new_view)
         toolbar.addAction(view_btn)
+
+        toolbar.addSeparator()
+
+        # Message cycle analysis button
+        cycle_btn = QAction("报文分析", self)
+        cycle_btn.setStatusTip("按CAN ID分析报文周期并与预期周期对比")
+        cycle_btn.triggered.connect(self.show_cycle_analysis)
+        toolbar.addAction(cycle_btn)
 
     def create_main_layout(self):
         """Create the main layout with splitter"""
@@ -617,6 +626,14 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.statusBar().showMessage("过滤器已清除", 3000)
+
+    def show_cycle_analysis(self):
+        """Open the message cycle analysis dialog"""
+        if not self.current_messages:
+            QMessageBox.information(self, "提示", "请先导入报文文件")
+            return
+        CycleAnalysisDialog(self.current_messages, self,
+                            getattr(self, 'current_import_file', '')).exec()
 
     def show_search_dialog(self):
         """Show search dialog"""
